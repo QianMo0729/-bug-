@@ -1,0 +1,3972 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>改完最后一个 bug 再下班</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      width: 100%; height: 100%; margin: 0; padding: 0;
+      overflow: hidden; background: #02060400;
+      background-color: #020604;
+      color: #d9ffe6;
+      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+      overscroll-behavior: none; touch-action: none; user-select: none;
+    }
+    canvas {
+      display: block; width: 100vw; height: 100dvh;
+      image-rendering: pixelated; image-rendering: crisp-edges;
+      background: #020604;
+    }
+    #fatal {
+      position: fixed; inset: 0; display: none; place-items: center;
+      padding: 28px; background: #050807; color: #39ff88;
+      text-align: center; font-size: 17px; line-height: 1.7; z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game" aria-label="Step Into Bug"></canvas>
+  <div id="fatal">哎呀，程序过热了。<br>刷新页面再试一次吧 ~</div>
+
+  <script>
+  (() => {
+    "use strict";
+
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d", { alpha: false });
+    const fatalEl = document.getElementById("fatal");
+
+    const C = {
+      black: "#020604", bg: "#050a07", bg2: "#07120c",
+      panel: "#06100b", panelEdge: "#0c3a24",
+      wall: "#0b1417", wallTop: "#13525a", wallSlot: "#06262b",
+      cyan: "#00b9c7", cyanDim: "#0a5560",
+      green: "#00ff66", green2: "#39ff88", greenDim: "#0faf4b", greenDark: "#073b25",
+      red: "#ff2a2a", red2: "#ff6b6b", redDark: "#5e0a16",
+      amber: "#f5c542", cream: "#f6e7bc", skin: "#f0b07a",
+      navy: "#143a63", navy2: "#1f6aa6", ink: "#0c0c12"
+    };
+
+    // ---- 八个文件的源码（地图即代码；config.py 解释 scanner 的副作用来源） ----
+    const CODE = {
+      "main.py": [
+        "import function",
+        "import agent_bot",
+        "import bug_maker",
+        "import game_setup",
+        "import current_role",
+        "",
+        "from maybe_bug import MaybeBug",
+        "",
+        "# ===== 初始化 =====",
+        "current_role.set_role(name='TuTu', age=18, sex='unknown')",
+        "game_setup.set_scene('main')",
+        "",
+        "time = 0.0",
+        "temp = 45",
+        "",
+        "agent_bot.bot_say('你醒在 main.py 里。程序会从上往下执行，先创建角色，再布置场景。')",
+        "",
+        "# ===== if 条件分支与 while 循环 =====",
+        "role_location = current_role.get_role_location()",
+        "",
+        "agent_bot.bot_say('你前面面临一个分岔路，在 python 中叫做条件语句，会判断给出的条件。')",
+        "",
+        "if role_location == 'Right':        # 如果角色走入了右侧的房间",
+        "    while True:",
+        "        function.some_founction()   # 一些代码功能，不用管它",
+        "        agent_bot.bot_say('你走入了一个 while 循环模块。')",
+        "        agent_bot.system_prompt('时间 +0.2h，温度 +5℃')",
+        "        time += 0.2",
+        "        temp += 5",
+        "        agent_bot.bot_say('True 是一个布尔值，表示条件永远为真。')",
+        "        agent_bot.bot_say('因此，这个循环将无限执行下去，除非被打断，例如 break 语句。')",
+        "        agent_bot.bot_say('拾取这个 break 代码块，粘贴上去！')",
+        "        # 这里可以用来添加代码",
+        "        agent_bot.system_prompt('你又回到了原点，打破这个循环！')",
+        "elif role_location == 'Left':       # 如果角色走入了左侧的房间",
+        "    function.some_founction()        # 一些代码功能，不用管它",
+        "    agent_bot.bot_say('看起来你的运气不好，走到了一个无意义的房间。(时间+0.2h)')",
+        "    agent_bot.system_prompt('好像浪费了一点时间，重新回到分岔路口吧！')",
+        "    time += 0.2",
+        "",
+        "# ===== 列表与下标 =====",
+        "agent_bot.bot_say('恭喜你走出了 if 判断！继续寻找 bug 在哪吧！')",
+        "agent_bot.bot_say('接下来要讲的是列表。列表从左到右数，但要注意它从 0 开始数。')",
+        "",
+        "NPCs = ['NPC0', 'NPC1', 'NPC2', 'NPC3', 'NPC4', 'NPC5', 'NPC6']",
+        "",
+        "agent_bot.bot_say('append 在末尾添加，insert 在指定位置添加，remove 删除元素。')",
+        "agent_bot.bot_say('每个 NPC 都有自己的位置，想办法走进下一个房间。')",
+        "agent_bot.system_prompt('持续深入（温度 +2℃）')",
+        "",
+        "temp += 2",
+        "",
+        "game_setup.set_npcs_location(NPCs)",
+        "",
+        "# 这里可以用来添加代码",
+        "",
+        "agent_bot.bot_say('恭喜你成功进入了下一个房间！')"
+      ],
+      "bug_model.py": [
+        "# bug_model.py —— 一只 bug 长什么样",
+        "# BugReport 就是一张“bug 卡片”：标题、等级、谁报的、修没修",
+        "# 这一关不动手修，只看清“修好”到底改了卡片里的什么",
+        "",
+        "class BugReport:",
+        "    def __init__(self, title, level, reporter='QA'):",
+        "        # 新建一张 bug 卡片，默认还没修",
+        "        self.title = title          # bug 叫什么",
+        "        self.level = level          # 严重等级 1~5",
+        "        self.reporter = reporter    # 谁报的",
+        "        self.fixed = False          # 真实修复状态：一开始是 False",
+        "        self.notes = []             # 处理过程中的备注",
+        "",
+        "    def mark_fixed(self):",
+        "        # 真正修好它：把 fixed 翻成 True",
+        "        self.fixed = True           # 修复 = 改这个真实状态",
+        "        self.notes.append('done')",
+        "",
+        "    def reopen(self, reason):",
+        "        # 打回重修：状态退回没修，并记下原因",
+        "        self.fixed = False",
+        "        self.notes.append('reopen: ' + reason)",
+        "",
+        "    def is_dangerous(self):",
+        "        # 等级超过 3 就算危险 bug，要优先处理",
+        "        return self.level > 3",
+        "",
+        "    def priority(self):",
+        "        # 危险 bug 排前面，数字越小越急",
+        "        return 1 if self.is_dangerous() else 3",
+        "",
+        "    def summary(self):",
+        "        # 一句话汇报这张卡片现在的状态",
+        "        state = '已修' if self.fixed else '待修'",
+        "        return f'[{state}] {self.title} (lv{self.level})'",
+        "",
+        "def demo():",
+        "    # 造一张卡片，亲眼看看“修好”改了什么",
+        "    bug = BugReport('login freezes', 2)",
+        "    print(bug.summary())        # [待修] login freezes (lv2)",
+        "    print('危险?', bug.is_dangerous())",
+        "    bug.mark_fixed()            # 改的是 bug.fixed，不是嘴上说一句",
+        "    print(bug.summary())        # [已修] login freezes (lv2)",
+        "    return bug",
+        "",
+        "demo()"
+      ],
+      "backlog.py": [
+        "# backlog.py —— 今天要修的 bug 清单",
+        "# BugBacklog 是一张待办清单：取下一个、划掉、重开",
+        "# 诡异点：每次 has_open_bug() 检查一下，清单反而更长了",
+        "",
+        "from bug_model import BugReport",
+        "from scanner import BugScanner",
+        "",
+        "class BugBacklog:",
+        "    def __init__(self):",
+        "        # 开局先塞 3 个已知 bug",
+        "        self.scanner = BugScanner()",
+        "        self.bugs = [",
+        "            BugReport('login freezes', 2),",
+        "            BugReport('profile crashes', 3),",
+        "            BugReport('payment fails', 4),",
+        "        ]",
+        "",
+        "    def has_open_bug(self):",
+        "        # 本该只回答“还有没有没修的 bug”",
+        "        self.scanner.scan(self.bugs)   # 可疑：检查时顺手 scan 了一下",
+        "        return len(self.bugs) > 0",
+        "",
+        "    def next_bug(self):",
+        "        # 取清单最上面那个去修",
+        "        return self.bugs[0]",
+        "",
+        "    def close(self, bug):",
+        "        # 修好了就从清单划掉",
+        "        self.bugs.remove(bug)",
+        "",
+        "    def reopen(self, bug):",
+        "        # 没修好，打回清单末尾",
+        "        self.bugs.append(bug)",
+        "",
+        "    def count(self):",
+        "        # 现在清单上还剩几个",
+        "        return len(self.bugs)",
+        "",
+        "def run_shift(backlog):",
+        "    # 只要还有 bug 就一直修——但清单好像越修越多",
+        "    while backlog.has_open_bug():",
+        "        bug = backlog.next_bug()",
+        "        bug.mark_fixed()",
+        "        backlog.close(bug)",
+        "    print('清单清空了？', backlog.count())",
+        "",
+        "run_shift(BugBacklog())"
+      ],
+      "fixer.py": [
+        "# fixer.py —— 修 bug 的两种姿势",
+        "# BugFixer 给每个 bug 选一种修法",
+        "# 危险 bug 走 quick_patch（嘴上说 fixed），普通的走 safe_patch（真改状态）",
+        "",
+        "class BugFixer:",
+        "    def __init__(self):",
+        "        self.patched = 0          # 一共贴了几次补丁",
+        "",
+        "    def make_patch(self, bug):",
+        "        # 入口：按 bug 危险与否，分流到两条路",
+        "        self.patched += 1",
+        "        if bug.is_dangerous():",
+        "            return self.quick_patch(bug)   # 左边那条捷径",
+        "        return self.safe_patch(bug)        # 右边那条正路",
+        "",
+        "    def quick_patch(self, bug):",
+        "        # 捷径：只返回一个 'fixed' 字符串，没碰 bug 本身",
+        "        # bug.fixed 其实还是 False —— 这就是技术债",
+        "        return 'fixed'",
+        "",
+        "    def safe_patch(self, bug):",
+        "        # 正路：真去改对象状态，再返回结果",
+        "        bug.mark_fixed()          # bug.fixed 变成 True",
+        "        return bug.fixed          # 把真实状态交回去",
+        "",
+        "    def report(self):",
+        "        # 这班一共贴了几次补丁",
+        "        print('patched', self.patched, 'times')",
+        "",
+        "def fix_all(fixer, bugs):",
+        "    # 把清单里的 bug 一个个交给 fixer",
+        "    results = []",
+        "    for bug in bugs:",
+        "        results.append(fixer.make_patch(bug))",
+        "    return results",
+        "",
+        "fixer = BugFixer()"
+      ],
+      "verifier.py": [
+        "# verifier.py —— 验收：这个 bug 真修好了吗",
+        "# BugVerifier 给 fixer 的补丁做检查",
+        "# 坑：它只看 patch 这句话像不像 'fixed'，不看 bug 的真实状态",
+        "",
+        "class BugVerifier:",
+        "    def __init__(self):",
+        "        self.passed = 0           # 一共放行了几个",
+        "",
+        "    def is_fixed(self, bug, patch):",
+        "        # 验收入口：返回 True 就放行下班",
+        "        return patch == 'fixed'   # BUG: 只信口号，没看 bug.fixed",
+        "",
+        "    def trust_string(self, patch):",
+        "        # 只信返回的文字——容易被 quick_patch 骗",
+        "        return patch == 'fixed'",
+        "",
+        "    def trust_state(self, bug):",
+        "        # 只信对象真实状态——这个骗不了",
+        "        return bug.fixed",
+        "",
+        "    def verify_all(self, bugs, patches):",
+        "        # 把每个 bug 和它的补丁一一验收",
+        "        for bug, patch in zip(bugs, patches):",
+        "            if not self.is_fixed(bug, patch):",
+        "                return False",
+        "            self.passed += 1",
+        "        return True",
+        "",
+        "def gate(verifier, bug, patch):",
+        "    # 一道验收门：过了才放你下班",
+        "    if verifier.is_fixed(bug, patch):",
+        "        print('PASS', bug.title)",
+        "        return True",
+        "    print('FAIL', bug.title)",
+        "    return False",
+        "",
+        "verifier = BugVerifier()"
+      ],
+      "runtime_guard.py": [
+        "# runtime_guard.py —— 运行时守护",
+        "# RuntimeGuard 本该在 CPU 过热时拉响警报",
+        "# 坑：except 把过热异常 pass 掉了——报警器静音，火还在烧",
+        "",
+        "class RuntimeGuard:",
+        "    def __init__(self):",
+        "        self.temperature = 55     # 当前 CPU 温度",
+        "        self.alarms = []          # 记录过的报警",
+        "",
+        "    def tick(self):",
+        "        # 每跑一轮，温度往上走一点",
+        "        self.temperature += 8",
+        "        try:",
+        "            self.raise_if_hot()   # 太热就该抛异常",
+        "        except RuntimeError as e:",
+        "            pass                  # BUG: 把报警吞了，啥也没记",
+        "",
+        "    def raise_if_hot(self):",
+        "        # 超过 100 度就抛运行时异常",
+        "        if self.temperature >= 100:",
+        "            raise RuntimeError('CPU overheated')",
+        "",
+        "    def log(self, e):",
+        "        # 正确做法之一：把异常记下来，别让它消失",
+        "        self.alarms.append(str(e))",
+        "",
+        "    def status(self):",
+        "        # 现在多热、报过几次警",
+        "        return self.temperature, len(self.alarms)",
+        "",
+        "def run_guard(guard, rounds):",
+        "    # 连跑几轮，看温度怎么变",
+        "    for _ in range(rounds):",
+        "        guard.tick()",
+        "    print('temp', guard.temperature, 'alarms', len(guard.alarms))",
+        "",
+        "run_guard(RuntimeGuard(), 8)"
+      ],
+      "scanner.py": [
+        "# scanner.py —— 隐藏文件 · 真正的根因在这",
+        "# BugScanner 本该只“扫描”：看一眼有哪些 bug，报个数",
+        "# 但 config 打开 AUTO_APPEND 后，它每扫一次就造一个新 bug",
+        "",
+        "from bug_model import BugReport",
+        "from config import scanner_policy",
+        "",
+        "class BugScanner:",
+        "    def __init__(self):",
+        "        self.probe_count = 0      # 扫描了几次",
+        "",
+        "    def scan(self, bugs):",
+        "        # 本该只读：数一数、看一眼，绝不改 bugs",
+        "        self.probe_count += 1",
+        "        if scanner_policy() == 'append':",
+        "            self.report_bug(bugs, 'ghost bug')   # 根因：扫描时偷偷塞 bug",
+        "        return bugs",
+        "",
+        "    def report_bug(self, bugs, title):",
+        "        # 把“发现的问题”直接塞进清单——清单于是永远清不空",
+        "        bugs.append(BugReport(title, 5))",
+        "",
+        "    def read_only_scan(self, bugs):",
+        "        # 正确的扫描：只统计，不 append",
+        "        return len(bugs)",
+        "",
+        "scanner = BugScanner()"
+      ],
+      "config.py": [
+        "# config.py —— 全局开关",
+        "# 这里没有业务逻辑，只有一排开关",
+        "# 但开关能改变别处代码的行为：比如让 scanner 从“只读”变“追加”",
+        "",
+        "# —— 扫描相关 ——",
+        "SCAN_MODE = 'report'        # report=发现就上报, silent=只数不报",
+        "AUTO_APPEND = True          # 上报时是否把问题直接塞进 bug 清单",
+        "MAX_APPEND = 1              # 单次扫描最多追加几个",
+        "",
+        "# —— 下班相关 ——",
+        "WORK_UNTIL_EMPTY = True     # 清单清空才许下班",
+        "OVERTIME_OK = True          # 清不空就加班（于是永远在加班）",
+        "",
+        "def scanner_policy():",
+        "    # scanner 每次扫描前都来问一句：我现在该怎么干？",
+        "    if SCAN_MODE == 'report' and AUTO_APPEND:",
+        "        return 'append'        # 边扫边塞——bug 于是越来越多",
+        "    return 'read_only'         # 只看不动——这才是 scan 该有的样子",
+        "",
+        "def can_clock_off(backlog):",
+        "    # 能不能下班，也被开关决定",
+        "    if not WORK_UNTIL_EMPTY:",
+        "        return True",
+        "    return backlog.count() == 0",
+        "",
+        "def describe():",
+        "    # 把当前配置翻成人话",
+        "    if scanner_policy() == 'append':",
+        "        return '危险：扫描会制造新 bug'",
+        "    return '安全：扫描只读'",
+        "",
+        "print('policy =>', scanner_policy())",
+        "print(describe())"
+      ]
+    };
+
+    // ---- 地图（# 墙 / . 地 / , 二进制草 / D 文件门 / W while房 / P 出生 / B DebugBot / b 小怪） ----
+    const MAPS = {
+      "main.py": [
+        "################",
+        "#######D########",
+        "#######.########",
+        "######...#######",
+        "#..............#",
+        "#..............#",
+        "#..............#",
+        "#..............#",
+        "###d######W##d##",
+        "#......#.......#",
+        "#......#.......#",
+        "#......#.......#",
+        "#......#.......#",
+        "#......#.......#",
+        "#......#.......#",
+        "######.#.#######",
+        "######...#######",
+        "######.P.#######",
+        "######.B.#######",
+        "################"
+      ],
+      "bug_model.py": [
+        "################",
+        "#......D.......#",
+        "#....,....,....#",
+        "#..............#",
+        "#..............#",
+        "#......b.......#",
+        "#..............#",
+        "#######..#######",
+        "#..............#",
+        "#....,....,....#",
+        "#..............#",
+        "#..T...B.......#",
+        "#..............#",
+        "#......P.......#",
+        "################"
+      ],
+      "backlog.py": [
+        "################",
+        "#......D.......#",
+        "#....,....,....#",
+        "#..............#",
+        "#..............#",
+        "#..............#",
+        "#......L.......#",
+        "#######..#######",
+        "#..............#",
+        "#....,....,....#",
+        "#......b.......#",
+        "#..T...B.......#",
+        "#..............#",
+        "#......P.......#",
+        "################"
+      ],
+      "config.py": [
+        "################",
+        "######.D.#######",
+        "######...#######",
+        "######...#######",
+        "######...#######",
+        "#..,........,..#",
+        "#..............#",
+        "#...,......,...#",
+        "######...#######",
+        "######...#######",
+        "######.B.#######",
+        "######...#######",
+        "######.P.#######",
+        "################"
+      ],
+      "fixer.py": [
+        "################",
+        "######.D.#######",
+        "######...#######",
+        "######...#######",
+        "######...#######",
+        "#..,........,..#",
+        "#..............#",
+        "#...,......,...#",
+        "######...#######",
+        "######...#######",
+        "######.B.#######",
+        "######...#######",
+        "######.P.#######",
+        "################"
+      ],
+      "verifier.py": [
+        "################",
+        "######.D.#######",
+        "######...#######",
+        "######...#######",
+        "######...#######",
+        "#..,........,..#",
+        "#..............#",
+        "#...,......,...#",
+        "######...#######",
+        "######...#######",
+        "######.B.#######",
+        "######...#######",
+        "######.P.#######",
+        "################"
+      ],
+      "runtime_guard.py": [
+        "################",
+        "#..............#",
+        "#....,....,....#",
+        "#..............#",
+        "#..............#",
+        "#......b.......#",
+        "#..............#",
+        "#######..#######",
+        "#..............#",
+        "#....,....,....#",
+        "#..............#",
+        "#..T...B.......#",
+        "#..............#",
+        "#......P.......#",
+        "################"
+      ]
+    };
+
+    const FILES = {
+      "main.py": {
+        title: "main.py", highlight: 16, crumb: "分岔路 · if/while/列表",
+        door: { to: "bug_model.py", label: "出口" },   // 列表房通关后从顶上的门出去（暂桥接 bug_model）
+        deadDoors: [
+          { x: 3, y: 8, kind: "rollback" },     // 左房（elif）尽头的门 → 看着像通下一房，其实强制 rollback
+          { x: 13, y: 8, kind: "origin" }       // 右房另一端的门 → 走过去送回原点
+        ],
+        npc: {                                   // 列表房：NPC 散布在房里，0 号墙人墙堵门；下标 = 固定站位
+          count: 7,
+          door: { x: 7, y: 1 },                  // 出口门
+          plug: { x: 7, y: 2 },                  // 门正下方那格——下标 0 的人堵在这（墙—人—墙）
+          slots: [
+            { x: 7, y: 2 },                      // Index 0 — 堵门
+            { x: 2, y: 4 },                      // Index 1
+            { x: 12, y: 4 },                     // Index 2
+            { x: 4, y: 6 },                      // Index 3
+            { x: 9, y: 4 },                      // Index 4
+            { x: 13, y: 7 },                     // Index 5
+            { x: 3, y: 7 },                      // Index 6
+            { x: 12, y: 6 }                      // Index 7 — append 落点（写着“7”的地块）
+          ]
+        },
+        focus: [
+          { x: 11, y: 11, line: 33, label: "break", patchable: true,
+            patch: { correct: ["break"], green: "        break                # 跳出 while 循环，离开房间",
+              unlockLoop: true, heatFix: -3, altBounce: true,
+              altHints: { "continue": "贴 continue 也能跑——但它只跳过本次循环剩下的部分，直接回到 while 开头，于是你又被弹回了起点。要跳出循环得用 break。" },
+              explain: "对了。break 让 while 循环停下来，你这才走得出去。",
+              compare: { title: "while 循环前后对照", before: ["# 这里可以用来添加代码", "（什么都没加，循环继续）"], after: ["break", "# 跳出循环，离开房间"] } },
+            plain: "把 break 贴到 while 里，循环才停得下来。",
+            hint: "while True 停不下来。捡 break 贴上去；贴 continue 只会跳过本次、回到开头。",
+            quiz: { q: "while True 里不写 break 会怎样？", choices: ["循环永远转，出不去", "直接报错退出", "自动跳到下一关"], answer: 0, reveal: "对。while True 自己不会停，要靠 break 跳出来。" } },
+          { x: 7, y: 5, line: 55, label: "运行", npcConsole: true, patchable: true,
+            plain: "站这里运行 append / insert / remove，操作 NPC 列表。",
+            hint: "0 号堵着门。要么 remove 把人全删光，要么 insert 把自己插到下标 0。",
+            quiz: { q: "列表第 1 个元素的下标是几？", choices: ["0", "1", "看心情"], answer: 0, reveal: "对，下标从 0 开始数。" } }
+        ],
+        pickups: [
+          { x: 9, y: 13, frag: "break" }, { x: 13, y: 11, frag: "continue" },
+          { x: 3, y: 5, frag: "remove" }, { x: 7, y: 6, frag: "insert" }, { x: 11, y: 5, frag: "append" }
+        ],
+        lesson: "一份代码一份地图：if 选路 / while 配 break / 列表下标从 0 数",
+        zones: [
+          { x0: 1, y0: 9, x1: 6, y1: 14, line: 35 },    // 左房 → elif Left
+          { x0: 8, y0: 9, x1: 14, y1: 14, line: 24 },    // 右房 → while True
+          { x0: 1, y0: 1, x1: 14, y1: 7, line: 45 }      // 列表房 → NPCs 列表
+        ],
+        // 进房触发的对话：bot 说的就是代码里那几句，逐句推进、对应行高亮（sys=屏幕中间淡入淡出）
+        dialogues: [
+          { key: "spawn", zone: { x0: 5, y0: 15, x1: 9, y1: 18 }, steps: [
+            { n: 16, t: "你醒在 main.py 里。程序会从上往下执行，先创建角色，再布置场景。" },
+            { n: 21, t: "你前面面临一个分岔路，在 python 中叫做条件语句，会判断给出的条件。" } ] },
+          { key: "right", zone: { x0: 8, y0: 9, x1: 14, y1: 14 }, steps: [
+            { n: 26, t: "你走入了一个 while 循环模块。" },
+            { n: 27, t: "时间 +0.2h，温度 +5℃", sys: true },
+            { n: 30, t: "True 是一个布尔值，表示条件永远为真。" },
+            { n: 31, t: "因此，这个循环将无限执行下去，除非被打断，例如 break 语句。" },
+            { n: 32, t: "拾取这个 break 代码块，粘贴上去！" } ] },
+          { key: "left", zone: { x0: 1, y0: 9, x1: 6, y1: 14 }, steps: [
+            { n: 37, t: "看起来你的运气不好，走到了一个无意义的房间。(时间+0.2h)" },
+            { n: 38, t: "好像浪费了一点时间，重新回到分岔路口吧！", sys: true } ] },
+          { key: "list", zone: { x0: 1, y0: 1, x1: 14, y1: 7 }, steps: [
+            { n: 42, t: "恭喜你走出了 if 判断！继续寻找 bug 在哪吧！" },
+            { n: 43, t: "接下来要讲的是列表。列表从左到右数，但要注意它从 0 开始数。" },
+            { n: 47, t: "append 在末尾添加，insert 在指定位置添加，remove 删除元素。" },
+            { n: 48, t: "每个 NPC 都有自己的位置，想办法走进下一个房间。" },
+            { n: 49, t: "持续深入（温度 +2℃）", sys: true } ] }
+        ],
+        goal: "目标：右屋补 break 跳出循环 → 上到列表房，把 0 号弄走、走出门",
+        intro: "你醒在 main.py。往上到岔路口：右屋是 while 循环（补 break 才出得去），左屋是死路。"
+      },
+      "bug_model.py": {
+        title: "bug_model.py", highlight: 11, crumb: "BugReport · fixed 状态",
+        door: { to: "backlog.py" },
+        focus: [{ x: 7, y: 9, line: 11, label: "fixed",
+          evidence: "fixed_state",
+          plain: "bug.fixed 才是这张 bug 卡片的真实修复状态。",
+          hint: "记住 fixed 这个字段：它是真状态。后面 verifier 会拿一句 'fixed' 字符串糊弄你。",
+          quiz: {
+            q: "后面判断 bug 有没有真修好，应该看什么？",
+            choices: ["bug.fixed 的真实状态", "'fixed' 这个字符串", "CPU 温度数字"],
+            answer: 0,
+            reveal: "对。字符串只是报告，bug.fixed 才是对象里真正的状态。"
+          } }],
+        lesson: "class = 一类东西的蓝图；方法改的是对象状态",
+        zones: [
+          { x0: 1, y0: 8, x1: 14, y1: 12, line: 11 },   // 下层 · 字段：__init__ 里的 fixed=False
+          { x0: 1, y0: 2, x1: 14, y1: 6, line: 16 }      // 上层 · 方法：mark_fixed 改状态
+        ],
+        goal: "目标：下层先看清 fixed 字段，上层看 mark_fixed 怎么改它，再去 backlog.py",
+        intro: "这是 BugReport，一张 bug 卡片。下层是它的字段（fixed 是真状态），上层是改状态的方法。"
+      },
+      "backlog.py": {
+        title: "backlog.py", highlight: 20, crumb: "BugBacklog · scan() 副作用",
+        door: { to: "config.py" },
+        focus: [{ x: 7, y: 4, line: 20, action: "step", to: "scanner.py", patchable: true, label: "scan",
+          hiddenGate: true,
+          stack: "scanner.scan()",
+          plain: "scan 本该只检查，不该往清单里塞新 bug。",
+          hint: "scan() 看着只是检查，其实动了数据。step_into() 往里追根因，别只在这 patch 治标。",
+          quiz: {
+            q: "scan() 这个名字暗示它应该做什么？",
+            choices: ["只检查 bugs", "偷偷新增 bug", "删除所有 bug"],
+            answer: 0,
+            reveal: "对，scan 听起来应该只读。真正危险的是：它实际制造了副作用。"
+          } }],
+        pickups: [{ x: 4, y: 3, frag: "# scan should be read-only" }, { x: 11, y: 3, frag: "return bugs" }],
+        lesson: "副作用 = 函数偷偷改了数据",
+        zones: [
+          { x0: 1, y0: 8, x1: 14, y1: 12, line: 12 },   // 下层 · 进门先 init：建好 bug 清单
+          { x0: 1, y0: 2, x1: 14, y1: 6, line: 20 }      // 上层 · has_open_bug：scan 偷偷加 bug
+        ],
+        goal: "目标：从下层 init 往上走，盯住上层 has_open_bug 里那行 scan()",
+        intro: "进门先 init 建好 bug 清单（下层）。往上是 has_open_bug——它每查一次，清单反而更长。"
+      },
+      "config.py": {
+        title: "config.py", highlight: 7, crumb: "AUTO_APPEND = True",
+        door: { to: "fixer.py" },
+        focus: [{ x: 3, y: 7, line: 7, label: "AUTO_APPEND",
+          evidence: "auto_append",
+          plain: "配置不是摆设，它会改变 scanner 的行为。",
+          hint: "Ghost Scanner 不是天生坏：AUTO_APPEND=True 才让它把“发现的问题”写回清单。右支道是安全的只读策略。",
+          quiz: {
+            q: "不改 scan() 函数，什么也可能让它开始 append？",
+            choices: ["配置开关", "文件标签颜色", "角色朝向"],
+            answer: 0,
+            reveal: "对。现实里根因也可能藏在配置，而不是业务函数本身。"
+          } }],
+        lesson: "配置 = 不改函数也能改变行为",
+        zones: [
+          { x0: 1, y0: 5, x1: 5, y1: 7, line: 7 },     // 左支道 → AUTO_APPEND = True（危险）
+          { x0: 9, y0: 5, x1: 14, y1: 7, line: 18 }     // 右支道 → return 'read_only'（安全）
+        ],
+        goal: "目标：岔口往左看 AUTO_APPEND 这个开关，再继续追假修复链",
+        intro: "这里是配置房。Ghost Scanner 不是天生坏，是配置把“扫描”变成了“边扫边追加”。"
+      },
+      "fixer.py": {
+        title: "fixer.py", highlight: 9, crumb: "BugFixer · quick vs safe",
+        door: { to: "verifier.py" },
+        focus: [{ x: 3, y: 7, line: 19, label: "quick_patch",
+          plain: "quick_patch 只返回 'fixed' 字符串，根本没碰 bug。",
+          hint: "左支道 quick_patch 是捷径，只嘴上说 fixed；右支道 safe_patch 才真改 bug.fixed，正确碎片在那。",
+          quiz: {
+            q: "quick_patch 返回 'fixed'，这能证明什么？",
+            choices: ["只证明它说了 fixed", "证明 bug.fixed 已变 True", "证明 scanner 已停止"],
+            answer: 0,
+            reveal: "对。返回值像口头承诺，后面还要用真实状态验证。"
+          } }],
+        pickups: [{ x: 12, y: 7, frag: "return bug.fixed" }],
+        lesson: "捷径(quick)只说 fixed；正路(safe)才改真实状态",
+        zones: [
+          { x0: 1, y0: 5, x1: 5, y1: 7, line: 19 },    // 左支道 → quick_patch return 'fixed'（假）
+          { x0: 9, y0: 5, x1: 14, y1: 7, line: 24 }     // 右支道 → safe_patch return bug.fixed（真）
+        ],
+        goal: "目标：岔口左看 quick_patch 是假动作，右支道捡 return bug.fixed 碎片",
+        intro: "BugFixer 在分流：危险 bug 走捷径 quick_patch（只说 fixed），其它走 safe_patch（真改状态）。"
+      },
+      "verifier.py": {
+        title: "verifier.py", highlight: 11, crumb: "BugVerifier · is_fixed()",
+        door: { to: "runtime_guard.py" },
+        focus: [{ x: 3, y: 7, line: 11, patchable: true, label: "verify",
+          patch: { correct: ["return bug.fixed"], green: "        return bug.fixed          # 看真实状态，骗不过",
+            explain: "对了。验收要看真实对象状态 bug.fixed，不是信一句 'fixed' 字符串。",
+            compare: {
+              title: "verifier.py 前后对照",
+              before: ["return patch == 'fixed'", "口号像就放行，可能没真修"],
+              after: ["return bug.fixed", "只认真实状态，骗不过"]
+            } },
+          plain: "别只看口号 'fixed'，要看 bug.fixed 这个真实状态。",
+          hint: "左支道 is_fixed 只比对 patch=='fixed'，信了字符串；用从 fixer 捡的 return bug.fixed 改掉它。右支道有 log(e)/raise。",
+          quiz: {
+            q: "patch == 'fixed' 最多说明什么？",
+            choices: ["返回文本像 fixed", "bug 一定修好了", "循环一定结束了"],
+            answer: 0,
+            reveal: "对。验收不能只信文本，要回到 bug.fixed 这样的真实状态。"
+          } }],
+        pickups: [{ x: 11, y: 7, frag: "log(e)" }, { x: 13, y: 7, frag: "raise" }],
+        lesson: "验收要看真实状态，不是信一句字符串",
+        zones: [
+          { x0: 1, y0: 5, x1: 5, y1: 7, line: 11 },    // 左支道 → 字符串门：要修的 is_fixed
+          { x0: 9, y0: 5, x1: 14, y1: 7, line: 19 }     // 右支道 → 状态门：trust_state 看 bug.fixed
+        ],
+        goal: "目标：岔口左边 patch 修 is_fixed；右支道捡 log(e)/raise 带去 runtime_guard",
+        intro: "BugVerifier 只要看到 'fixed' 就放行。它真正该看的是对象的真实状态 bug.fixed。"
+      },
+      "runtime_guard.py": {
+        title: "runtime_guard.py", highlight: 16, crumb: "RuntimeGuard · except: pass",
+        focus: [{ x: 7, y: 4, line: 16, patchable: true, label: "except",
+          patch: { correct: ["log(e)", "raise"], green: "            log(e)               # 记录异常，别再 pass 掉",
+            explain: "对了。异常要记录、要往外抛，而不是 pass 掉让报警器闭嘴。", heatFix: -12,
+            compare: {
+              title: "runtime_guard.py 前后对照",
+              before: ["except RuntimeError: pass", "报警被吞，CPU 继续升温"],
+              after: ["log(e) / raise", "记录现场，再交给外层处理"]
+            } },
+          runHeat: 15,
+          plain: "except 捕获错误，pass 是假装没看见。",
+          hint: "except: pass 把过热异常吞了。用 verifier 捡的 log(e) 或 raise 修它——这是控压，不是灭火。",
+          quiz: {
+            q: "except: pass 真正做了什么？",
+            choices: ["把报警声关掉", "把根因修掉", "让 scanner 只读"],
+            answer: 0,
+            reveal: "对。没有报错不代表没问题，可能只是报警被吞了。"
+          } }],
+        lesson: "try/except = 处理出错现场；pass 是把报警静音",
+        zones: [
+          { x0: 1, y0: 8, x1: 14, y1: 12, line: 12 },   // 下层 · tick：每跑一轮温度 +8
+          { x0: 1, y0: 2, x1: 14, y1: 6, line: 16 }      // 上层 · except: pass 把过热报警吞了
+        ],
+        goal: "目标：上层把 except 的 pass 改成记录/抛出，别把“没报错”当“没问题”",
+        intro: "RuntimeGuard：下层每跑一轮 CPU 就升温，上层本该报警，却被 except: pass 吞了。沉默不灭火。"
+      },
+      "scanner.py": {
+        title: "scanner.py", highlight: 16, crumb: "BugScanner.scan() · 根因",
+        lesson: "根因 = 真正制造问题的地方，往往藏在“只读”的伪装下",
+        intro: "scanner.py —— 隐藏文件。它原本只是个扫描器，但 config 打开 AUTO_APPEND 后，scan() 每扫一次就 report_bug 一次。"
+      }
+    };
+    const FILE_ORDER = ["main.py", "bug_model.py", "backlog.py", "config.py", "fixer.py", "verifier.py", "runtime_guard.py"];
+    const HEAT_BOSS_THRESHOLD = 88;
+    const BUG_HIT_HEAT = 7;
+    const PASSIVE_HEAT_RATE = 0.07;
+    const PROGRESS_HEAT = {
+      file: 1.8,
+      step: 2.4,
+      evidence: 1.2,
+      shard: 0.8,
+      terminal: 0.9,
+      fix: 1.0
+    };
+    const EXTRA_BUGS = {
+      "backlog.py": [{ x: 6, y: 8 }, { x: 10, y: 11 }],
+      "config.py": [{ x: 10, y: 8 }],
+      "fixer.py": [{ x: 10, y: 10 }],
+      "verifier.py": [{ x: 5, y: 10 }],
+      "runtime_guard.py": [{ x: 5, y: 10 }, { x: 10, y: 5 }]
+    };
+
+    function parseMap(raw, name) {
+      const W = 16;
+      const grid = raw.map((row, y) => {
+        const chars = row.padEnd(W, ".").slice(0, W).split("");
+        if (y === 0 || y === raw.length - 1) return chars.map(() => "#");
+        chars[0] = "#"; chars[W - 1] = "#";
+        return chars;
+      });
+      const H = grid.length;
+      let spawn = { x: 7, y: H - 4 }, bot = { x: 7, y: H - 6 };
+      const bugs = [];
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const ch = grid[y][x];
+        if (ch === "P") { spawn = { x, y }; grid[y][x] = "."; }
+        else if (ch === "B") { bot = { x, y }; grid[y][x] = "."; }
+        else if (ch === "b") { bugs.push(makeBugPatrol(name, bugs.length, x, y)); grid[y][x] = "."; }
+      }
+      const extras = EXTRA_BUGS[name] || [];
+      for (const p of extras) bugs.push(makeBugPatrol(name, bugs.length, p.x, p.y, true));
+      return { grid, w: W, h: H, spawn, botPos: bot, bugs };
+    }
+    function makeBugPatrol(file, idx, x, y, extra) {
+      const modes = ["h", "v", "loop"];
+      const mode = modes[(idx + file.length) % modes.length];
+      return {
+        id: file + ":" + idx + ":" + x + ":" + y,
+        x, y, homeX: x, homeY: y,
+        patrol: mode,
+        amp: extra ? 0.92 : 0.72,
+        speed: 0.7 + ((idx + file.length) % 4) * 0.18,
+        phase: idx * 1.7 + file.length * 0.31,
+        t: idx * 0.73,
+        extra: !!extra
+      };
+    }
+    const mapCache = {};
+    function getMap(name) {
+      if (!mapCache[name]) mapCache[name] = parseMap(MAPS[name], name);
+      return mapCache[name];
+    }
+
+    const BOT_LINES = {
+      run: "run() 只从表面扫一遍，跑得快，但看不见里面。",
+      step: "这行不是终点，是扇门。step_into() 进去看它到底在干嘛。",
+      patch: "先别急着补。站到发光那行上，我告诉你那是不是病根。",
+      door: "发光的门就是下一个文件，走过去撞一下就进。",
+      doorLocked: "这条路还没通，先用上面的标签栏切回去。",
+      whileRoom: "这屋子是 while True，会一直转——除非里面有人喊停。",
+      loopTrap: "看到没？那门是假的，你又被甩回起点。while True 不会自己停下来。",
+      loopBreak: "break 补上了，循环现在知道什么时候收工。门，真开了。",
+      runSkim: "run() 从表面溜过去了，病根还蹲在里面没动。",
+      lockedDive: "再往里是 scanner.py，现在还进不去。",
+      peekHint: "进屋前先点“纵览”看一眼，少走弯路。",
+      patchShallow: "表面是安静了，可 CPU 更烫——这补丁是胶带，不是修复。",
+      cpuWarn: "温度上来了。把异常吞掉不叫修好，只是让报警器闭嘴。",
+      bugHit: "撞红色 bug 会升温。它们来回巡逻，错开了再过。",
+      firstLesson: "不用懂 Python。盯发光的词、走进门、挨个试按钮，代码我帮你翻成人话。"
+    };
+    const INTRO_PAGES = [
+      { speaker: "老板  17:55", lines: ["线上还剩 3 个 bug，", "改完你就能走。"] },
+      { speaker: "你", lines: ["改掉一个，", "怎么又冒出来一个？"] },
+      { speaker: "DebugBot", lines: ["不是你手慢。", "有东西在偷偷造新 bug。"] }
+    ];
+
+    const state = {
+      scene: "title", t: 0, last: 0, dpr: 1, W: 0, H: 0,
+      titleT: 0, introT: 0, introPhase: "dialogue", introStep: 0,
+      heatStoryT: 0, heatStoryStep: 0,
+      ftT: 0, ftTo: null, ftLoaded: false,
+      cpuHeat: 35, techDebt: 0, shards: 0, insight: 0, streak: 0, comboUntil: 0,
+      gameTime: 0, heatDrift: 0, heatProgress: 0,
+      heatBossTriggered: false, heatWarned: false, lastBugHitAt: -9, hitBugs: [],
+      activeFile: "main.py", openedFiles: ["main.py"],
+      mode: "explore", focus: null, focusT: 0,
+      inventory: [], inv: { open: false, mode: "view" },
+      checkpoint: null, codeOverrides: {}, pickedUp: [], fx: [],
+      mainBreak: false, peek: { open: false }, tabScroll: 0,
+      npc: null, npcPick: { open: false },
+      dlg: null, dlgSeen: [], sysMsg: null,
+      codeScroll: 0, codeScrollFile: null,
+      corridor: { t: 0, revealed: false },
+      boss: { t: 0, bullets: [], spawnT: 0, won: false, flash: 0 },
+      arena: { x: 0.5, y: 0.78 },
+      endingType: null, save: null,
+      player: { gx: 7, gy: 17, fx: 7, fy: 17, dir: "down", moving: false, anim: 0, frame: 0 },
+      held: null, queue: null,
+      cam: { x: 0, y: 0 },
+      map: null,
+      bot: { msg: "", until: 0, bob: 0 },
+      buttons: [], mapRect: null, tile: 32,
+      focusSeen: [], solvedFocus: [], lessonSeen: [], quizAnswered: [],
+      quiz: { open: false, key: "", fp: null, selected: -1, answered: false },
+      compare: null,
+      help: { open: false },
+      guideMode: "auto",
+      patchGraceUsed: false,
+      patchUnlocked: false,
+      rollbackUnlocked: false,
+      evidence: [],
+      trace: [],
+      terminalsSeen: [],
+      hiddenGateT: 0,
+      callStack: ["main.py"],
+      lastMoveAt: 0, bugHits: 0
+    };
+
+    const A = { floor: [], grass: null, wall: null, door: null, bot: null, bug: null, player: {}, monitor: null, shard: null, terminal: null, lock: null };
+
+    function showFatal() { fatalEl.style.display = "grid"; }
+    function makeCanvas(w, h) {
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const g = c.getContext("2d"); g.imageSmoothingEnabled = false;
+      return { c, g };
+    }
+    function px(g, x, y, w, h, color) { g.fillStyle = color; g.fillRect(x, y, w, h); }
+    function txt(g, s, x, y, size, color, align = "left", weight = "400") {
+      g.fillStyle = color;
+      g.font = `${weight} ${size}px "Microsoft YaHei","PingFang SC",monospace`;
+      g.textAlign = align; g.textBaseline = "top";
+      g.fillText(s, x, y);
+    }
+
+    // 像素字体：把文字画进低分辨率离屏 canvas 再最近邻放大，得到封面那种方块像素字
+    let _pc = null, _pg = null;
+    function pixelText(segments, cx, top, finalSize, opts = {}) {
+      const weight = opts.weight || "900";
+      const ps = opts.ps || 3;
+      const outline = opts.outline || "#070b09";
+      const outlineWidth = opts.outlineWidth || 1;
+      const shadow = opts.shadow || null;
+      const shadowX = shadow ? (shadow.x || 0) : 0;
+      const shadowY = shadow ? (shadow.y || 0) : 0;
+      const fontOf = sz => `${weight} ${sz}px "Microsoft YaHei","PingFang SC",monospace`;
+      if (!_pc) { const m = makeCanvas(8, 8); _pc = m.c; _pg = m.g; }
+      const g = _pg;
+      let low = Math.max(7, Math.round(finalSize / ps));
+      const measure = sz => { g.font = fontOf(sz); return segments.reduce((a, s) => a + g.measureText(s.s).width, 0); };
+      let w = measure(low);
+      if (opts.maxW) while (w * ps > opts.maxW && low > 7) { low--; w = measure(low); }
+      const pad = 3 + outlineWidth + Math.ceil(Math.max(Math.abs(shadowX), Math.abs(shadowY)));
+      const cw = Math.ceil(w) + pad * 2, ch = Math.ceil(low * 1.22) + pad * 2;
+      _pc.width = cw; _pc.height = ch;
+      g.imageSmoothingEnabled = false;
+      g.font = fontOf(low); g.textBaseline = "top"; g.textAlign = "left";
+      if (shadow) {
+        g.fillStyle = shadow.fill || "rgba(0,0,0,0.7)";
+        let x = pad;
+        for (const s of segments) { g.fillText(s.s, x + shadowX, pad + shadowY); x += g.measureText(s.s).width; }
+      }
+      // 低分辨率描边，放大后得到厚重的像素字边缘
+      g.fillStyle = outline;
+      for (let dx = -outlineWidth; dx <= outlineWidth; dx++) for (let dy = -outlineWidth; dy <= outlineWidth; dy++) {
+        if (!dx && !dy) continue;
+        if (Math.abs(dx) + Math.abs(dy) > outlineWidth + 1) continue;
+        let x = pad;
+        for (const s of segments) { g.fillText(s.s, x + dx, pad + dy); x += g.measureText(s.s).width; }
+      }
+      // 彩色填充
+      let x = pad;
+      for (const s of segments) { g.fillStyle = s.fill; g.fillText(s.s, x, pad); x += g.measureText(s.s).width; }
+      ctx.imageSmoothingEnabled = false;
+      const dw = cw * ps, dh = ch * ps;
+      const dx0 = opts.align === "left" ? cx : cx - dw / 2;
+      ctx.drawImage(_pc, Math.round(dx0), Math.round(top), dw, dh);
+      ctx.imageSmoothingEnabled = false;
+      return dh;
+    }
+
+    function titleText(segments, cx, top, finalSize, opts = {}) {
+      let size = Math.round(finalSize);
+      const weight = opts.weight || "900";
+      const fontOf = sz => `${weight} ${sz}px "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif`;
+      const measure = sz => {
+        ctx.font = fontOf(sz);
+        return segments.reduce((a, s) => a + ctx.measureText(s.s).width, 0);
+      };
+      let width = measure(size);
+      if (opts.maxW) while (width > opts.maxW && size > 18) { size--; width = measure(size); }
+      const shadow = opts.shadow || null;
+      let x = cx - width / 2;
+
+      ctx.save();
+      ctx.font = fontOf(size);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.lineJoin = "miter";
+      ctx.miterLimit = 2;
+      if (shadow) {
+        ctx.fillStyle = shadow.fill || "#00191b";
+        let sx = x;
+        for (const seg of segments) {
+          ctx.fillText(seg.s, sx + (shadow.x || 0), top + (shadow.y || 0));
+          sx += ctx.measureText(seg.s).width;
+        }
+      }
+      ctx.strokeStyle = opts.outline || "#020302";
+      ctx.lineWidth = opts.lineWidth || Math.max(4, size * 0.12);
+      let ox = x;
+      for (const seg of segments) {
+        ctx.strokeText(seg.s, ox, top);
+        ox += ctx.measureText(seg.s).width;
+      }
+      let fx = x;
+      for (const seg of segments) {
+        ctx.fillStyle = seg.fill;
+        ctx.fillText(seg.s, fx, top);
+        fx += ctx.measureText(seg.s).width;
+      }
+      ctx.restore();
+      return Math.round(size * 1.12);
+    }
+
+    let _btc = null, _btg = null;
+    let _brc = null, _brg = null;
+    const blockTextCache = new Map();
+    function blockTitleText(segments, cx, top, targetH, opts = {}) {
+      const rows = opts.rows || 20;
+      const scale = opts.scale || Math.max(1, targetH / rows);
+      const coverage = opts.coverage == null ? 0.14 : opts.coverage;
+      const key = segments.map(s => `${s.s}:${s.fill}`).join("|") + `:${rows}:${opts.weight || "900"}:${coverage}`;
+      const data = blockTextCache.get(key) || buildBlockTitleData(segments, rows, opts.weight || "900", { coverage });
+      blockTextCache.set(key, data);
+      const fitScale = opts.maxW && data.w * scale > opts.maxW ? opts.maxW / data.w : scale;
+      const outlineCells = opts.outlineCells == null ? 1 : opts.outlineCells;
+      const shadow = opts.shadow === false ? null : (opts.shadow || { x: fitScale, y: fitScale, fill: "#00191b" });
+      const shadowCellsX = shadow ? Math.max(1, Math.round((shadow.x || fitScale) / fitScale)) : 0;
+      const shadowCellsY = shadow ? Math.max(1, Math.round((shadow.y || fitScale) / fitScale)) : 0;
+      const pad = outlineCells + Math.max(shadowCellsX, shadowCellsY) + 1;
+      const sw = data.w + pad * 2, sh = data.h + pad * 2;
+      if (!_brc) { const m = makeCanvas(8, 8); _brc = m.c; _brg = m.g; }
+      _brc.width = sw; _brc.height = sh;
+      _brg.imageSmoothingEnabled = false;
+      _brg.clearRect(0, 0, sw, sh);
+      if (shadow) {
+        _brg.fillStyle = shadow.fill;
+        for (const p of data.cells) _brg.fillRect(pad + p.x + shadowCellsX, pad + p.y + shadowCellsY, 1, 1);
+      }
+      _brg.fillStyle = opts.outline || "#020302";
+      for (const p of data.cells) {
+        for (let dx = -outlineCells; dx <= outlineCells; dx++) for (let dy = -outlineCells; dy <= outlineCells; dy++) {
+          if (!dx && !dy) continue;
+          if (Math.abs(dx) + Math.abs(dy) > outlineCells) continue;
+          _brg.fillRect(pad + p.x + dx, pad + p.y + dy, 1, 1);
+        }
+      }
+      for (const p of data.cells) {
+        _brg.fillStyle = p.fill;
+        _brg.fillRect(pad + p.x, pad + p.y, 1, 1);
+      }
+      const dw = Math.round(sw * fitScale), dh = Math.round(sh * fitScale);
+      const dx0 = Math.round(cx - (data.w * fitScale) / 2 - pad * fitScale);
+      const dy0 = Math.round(top - pad * fitScale);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(_brc, dx0, dy0, dw, dh);
+      ctx.imageSmoothingEnabled = false;
+      return data.h * fitScale;
+    }
+
+    function buildBlockTitleData(segments, rows, weight, opts = {}) {
+      const srcSize = 180, pad = 32;
+      const coverage = opts.coverage == null ? 0.14 : opts.coverage;
+      if (!_btc) { const m = makeCanvas(8, 8); _btc = m.c; _btg = m.g; }
+      const g = _btg;
+      const font = `${weight} ${srcSize}px "Microsoft YaHei","PingFang SC","Segoe UI",sans-serif`;
+      g.font = font;
+      const widths = segments.map(s => g.measureText(s.s).width);
+      const totalW = widths.reduce((a, b) => a + b, 0);
+      const sw = Math.ceil(totalW + pad * 2), sh = Math.ceil(srcSize * 1.28 + pad * 2);
+      _btc.width = sw; _btc.height = sh;
+      g.imageSmoothingEnabled = false;
+      g.clearRect(0, 0, sw, sh);
+      g.font = font;
+      g.textBaseline = "top";
+      g.textAlign = "left";
+      g.fillStyle = "#fff";
+      let tx = pad;
+      const ranges = [];
+      for (let i = 0; i < segments.length; i++) {
+        ranges.push({ x0: tx, x1: tx + widths[i], fill: segments[i].fill });
+        g.fillText(segments[i].s, tx, pad);
+        tx += widths[i];
+      }
+      const img = g.getImageData(0, 0, sw, sh).data;
+      let minX = sw, minY = sh, maxX = 0, maxY = 0;
+      for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+        if (img[(y * sw + x) * 4 + 3] > 18) {
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+        }
+      }
+      minX = Math.max(0, minX - 2); minY = Math.max(0, minY - 2);
+      maxX = Math.min(sw - 1, maxX + 2); maxY = Math.min(sh - 1, maxY + 2);
+      const bw = maxX - minX + 1, bh = maxY - minY + 1;
+      const cols = Math.max(1, Math.ceil((bw / bh) * rows));
+      const cells = [];
+      for (let gy = 0; gy < rows; gy++) for (let gx = 0; gx < cols; gx++) {
+        const x1 = Math.floor(minX + gx * bw / cols);
+        const x2 = Math.ceil(minX + (gx + 1) * bw / cols);
+        const y1 = Math.floor(minY + gy * bh / rows);
+        const y2 = Math.ceil(minY + (gy + 1) * bh / rows);
+        let hits = 0, total = 0, peak = 0;
+        for (let sy = y1; sy < y2; sy++) for (let sx = x1; sx < x2; sx++) {
+          const a = img[(sy * sw + sx) * 4 + 3];
+          total++; if (a > 60) hits++; if (a > peak) peak = a;
+        }
+        if (peak > 120 && hits / Math.max(1, total) > coverage) {
+          const mid = minX + (gx + 0.5) * bw / cols;
+          const seg = ranges.find(r => mid >= r.x0 && mid <= r.x1) || ranges[ranges.length - 1];
+          cells.push({ x: gx, y: gy, fill: seg.fill });
+        }
+      }
+      return { w: cols, h: rows, cells };
+    }
+
+    // ================= 资源（全部代码绘制，16px 复用） =================
+    function buildAssets() {
+      A.floor = [buildFloor(0), buildFloor(1), buildFloor(2)];
+      A.grass = buildGrass();
+      A.wall = buildWall();
+      A.door = buildDoor();
+      A.bot = buildBot();
+      A.bug = buildBug();
+      A.monitor = buildMonitor();
+      A.shard = buildShard();
+      A.terminal = buildTerminal();
+      A.lock = buildLockTerminal();
+      A.boss = buildScannerBoss();
+      A.cpuBoss = buildCpuBoss();
+      for (const d of ["down", "up", "left", "right"]) {
+        A.player[d] = [buildPlayer(d, 0), buildPlayer(d, 1)];
+      }
+      A.npc = [];
+      for (let i = 0; i < NPC_COLORS.length; i++) A.npc.push([buildNpc(i, 0), buildNpc(i, 1)]);
+    }
+
+    // Ghost Scanner Boss：红黑扫描器，绿色代码线身体 + 红 bug 眼
+    function buildScannerBoss() {
+      const { c, g } = makeCanvas(32, 24);
+      px(g, 4, 2, 24, 18, "#1a0508");
+      px(g, 4, 2, 24, 2, "#3a0a12");
+      px(g, 6, 5, 20, 1, C.greenDim);
+      px(g, 6, 8, 20, 1, C.greenDark);
+      px(g, 6, 15, 20, 1, C.greenDim);
+      px(g, 6, 18, 20, 1, C.greenDark);
+      px(g, 9, 9, 5, 4, "#2a0309");
+      px(g, 18, 9, 5, 4, "#2a0309");
+      px(g, 10, 10, 3, 2, C.red);
+      px(g, 19, 10, 3, 2, C.red);
+      px(g, 11, 10, 1, 1, C.red2); px(g, 20, 10, 1, 1, C.red2);
+      px(g, 2, 6, 2, 10, "#3a0a12");
+      px(g, 28, 6, 2, 10, "#3a0a12");
+      px(g, 13, 0, 6, 2, "#5e0a16");
+      return c;
+    }
+
+    // CPU Overheat Boss：过热的 CPU 芯片，红橙核心 + 引脚
+    function buildCpuBoss() {
+      const { c, g } = makeCanvas(32, 24);
+      px(g, 6, 4, 20, 16, "#2a0a06");
+      px(g, 6, 4, 20, 2, "#5e1a0a");
+      px(g, 9, 7, 14, 10, "#1a0604");
+      px(g, 11, 9, 10, 6, C.red);
+      px(g, 13, 10, 6, 4, C.amber);
+      px(g, 14, 11, 4, 2, "#fff2c0");
+      for (let i = 0; i < 5; i++) { px(g, 7 + i * 4, 2, 2, 2, "#7a5a1a"); px(g, 7 + i * 4, 20, 2, 2, "#7a5a1a"); }
+      px(g, 4, 8, 2, 8, "#7a5a1a"); px(g, 26, 8, 2, 8, "#7a5a1a");
+      return c;
+    }
+
+    // 电路板地砖（干净版，三种变体复用）
+    function buildFloor(v) {
+      const { c, g } = makeCanvas(16, 16);
+      px(g, 0, 0, 16, 16, "#06110b");
+      px(g, 0, 0, 16, 1, "#081a10");
+      px(g, 0, 0, 1, 16, "#081a10");
+      px(g, 0, 15, 16, 1, "#040d08");
+      px(g, 15, 0, 1, 16, "#040d08");
+      if (v === 0) {
+        px(g, 3, 8, 10, 1, "#0c3a24");
+        px(g, 8, 3, 1, 9, "#0c3a24");
+        px(g, 7, 7, 3, 3, "#0a2f1d");
+        px(g, 8, 8, 1, 1, C.greenDim);
+      } else if (v === 1) {
+        px(g, 11, 2, 1, 12, "#0c3a24");
+        px(g, 11, 11, 3, 1, "#0c3a24");
+        px(g, 3, 4, 3, 2, "#0a2f1d");
+        px(g, 11, 11, 1, 1, "#0d6a34");
+      } else {
+        px(g, 2, 11, 11, 1, "#0c3a24");
+        px(g, 4, 4, 4, 3, "#0a2a1b");
+        px(g, 5, 5, 1, 1, "#0d6a34");
+        px(g, 12, 6, 1, 6, "#0a2f1d");
+      }
+      return c;
+    }
+
+    // 0/1 二进制草
+    function buildGrass() {
+      const { c, g } = makeCanvas(16, 16);
+      px(g, 0, 0, 16, 16, "#050e08");
+      g.textBaseline = "top"; g.font = "6px monospace";
+      const bits = [["1", 2, 1, C.greenDim], ["0", 8, 2, C.green2], ["0", 12, 0, C.greenDark],
+        ["1", 1, 7, C.greenDark], ["1", 6, 8, C.greenDim], ["0", 11, 7, C.green2]];
+      for (const [b, x, y, col] of bits) { g.fillStyle = col; g.fillText(b, x, y); }
+      px(g, 1, 13, 1, 3, "#0d6a34"); px(g, 5, 12, 1, 4, "#0faf4b");
+      px(g, 9, 13, 1, 3, "#0a3b20"); px(g, 13, 12, 1, 4, "#0d6a34");
+      return c;
+    }
+
+    // 服务器机架墙
+    function buildWall() {
+      const { c, g } = makeCanvas(16, 16);
+      px(g, 0, 0, 16, 16, "#0a1316");
+      px(g, 0, 0, 16, 2, "#13525a");
+      px(g, 0, 2, 2, 14, "#071f24");
+      px(g, 14, 2, 2, 14, "#050f12");
+      px(g, 3, 4, 10, 2, "#06262b");
+      px(g, 3, 8, 10, 2, "#06262b");
+      px(g, 3, 12, 10, 2, "#06262b");
+      px(g, 11, 4, 1, 2, C.greenDim);
+      px(g, 11, 12, 1, 2, C.amber);
+      return c;
+    }
+
+    // 发光文件门
+    function buildDoor() {
+      const { c, g } = makeCanvas(16, 16);
+      px(g, 0, 0, 16, 16, "#06110b");
+      px(g, 2, 1, 12, 14, "#073b25");
+      px(g, 3, 2, 10, 12, "#02201a");
+      px(g, 4, 3, 8, 10, "#031d16");
+      px(g, 7, 3, 2, 10, C.green);
+      px(g, 4, 3, 8, 1, C.cyan);
+      px(g, 4, 12, 8, 1, C.cyanDim);
+      px(g, 5, 6, 4, 1, C.green2);
+      px(g, 5, 8, 3, 1, C.greenDim);
+      return c;
+    }
+
+    // DebugBot 无人机
+    function buildBot() {
+      const { c, g } = makeCanvas(16, 16);
+      px(g, 7, 0, 2, 3, C.cyanDim);
+      px(g, 7, 0, 2, 1, C.green2);
+      px(g, 4, 4, 8, 7, "#0c2b27");
+      px(g, 3, 5, 1, 5, "#0c2b27");
+      px(g, 12, 5, 1, 5, "#0c2b27");
+      px(g, 4, 4, 8, 1, "#15524a");
+      px(g, 5, 6, 6, 3, "#02110d");
+      px(g, 6, 7, 4, 1, C.green2);
+      px(g, 6, 7, 1, 1, "#b6ffe0");
+      px(g, 5, 12, 6, 1, "#0a5560");
+      px(g, 6, 13, 4, 1, "rgba(57,255,136,0.5)");
+      return c;
+    }
+
+    function buildBug() {
+      const { c, g } = makeCanvas(16, 16);
+      px(g, 6, 2, 4, 2, C.red);
+      px(g, 4, 4, 8, 8, C.red);
+      px(g, 3, 6, 1, 4, C.redDark);
+      px(g, 12, 6, 1, 4, C.redDark);
+      px(g, 2, 7, 2, 1, C.red); px(g, 12, 7, 2, 1, C.red);
+      px(g, 5, 6, 2, 2, "#2a0309"); px(g, 9, 6, 2, 2, "#2a0309");
+      px(g, 5, 6, 1, 1, C.cream); px(g, 9, 6, 1, 1, C.cream);
+      px(g, 7, 9, 2, 1, "#2a0309");
+      px(g, 6, 1, 1, 2, C.red2); px(g, 9, 1, 1, 2, C.red2);
+      return c;
+    }
+
+    function buildShard() {
+      const { c, g } = makeCanvas(16, 16);
+      px(g, 6, 1, 4, 2, C.green2);
+      px(g, 4, 3, 8, 2, C.green);
+      px(g, 3, 5, 10, 7, "#06351f");
+      px(g, 5, 6, 2, 1, C.cyan);
+      px(g, 8, 6, 3, 1, C.green2);
+      px(g, 5, 8, 6, 1, C.greenDim);
+      px(g, 6, 10, 4, 1, C.amber);
+      px(g, 5, 12, 6, 2, "#03170d");
+      px(g, 2, 6, 1, 4, "rgba(57,255,136,0.7)");
+      px(g, 13, 6, 1, 4, "rgba(57,255,136,0.7)");
+      return c;
+    }
+
+    function buildTerminal() {
+      const { c, g } = makeCanvas(16, 16);
+      px(g, 2, 2, 12, 10, "#0a1418");
+      px(g, 3, 3, 10, 8, "#02120e");
+      px(g, 4, 4, 5, 1, C.green2);
+      px(g, 4, 6, 8, 1, C.cyanDim);
+      px(g, 4, 8, 4, 1, C.greenDim);
+      px(g, 6, 12, 4, 1, "#0a1418");
+      px(g, 4, 13, 8, 2, "#061013");
+      px(g, 12, 3, 1, 2, C.amber);
+      return c;
+    }
+
+    function buildLockTerminal() {
+      const { c, g } = makeCanvas(16, 16);
+      px(g, 2, 5, 12, 9, "#170709");
+      px(g, 4, 7, 8, 5, "#2a0a10");
+      px(g, 6, 1, 4, 2, C.amber);
+      px(g, 5, 3, 1, 3, C.amber);
+      px(g, 10, 3, 1, 3, C.amber);
+      px(g, 7, 9, 2, 2, C.red2);
+      px(g, 7, 11, 2, 1, C.red);
+      return c;
+    }
+
+    // 小显示器（标题/工位复用）
+    function buildMonitor() {
+      const { c, g } = makeCanvas(20, 16);
+      px(g, 1, 1, 18, 12, "#0c1418");
+      px(g, 2, 2, 16, 10, "#03130f");
+      px(g, 3, 3, 9, 1, C.greenDim);
+      px(g, 3, 5, 12, 1, C.navy2);
+      px(g, 3, 7, 7, 1, C.green2);
+      px(g, 3, 9, 10, 1, C.greenDim);
+      px(g, 8, 13, 4, 1, "#0c1418");
+      px(g, 6, 14, 8, 2, "#0a0f12");
+      return c;
+    }
+
+    function buildPlayer(dir, frame) {
+      const { c, g } = makeCanvas(16, 20);
+      const hair = "#15131a", hood = C.navy, hood2 = C.navy2, pants = "#0a1320", shoe = "#050608", skin = C.skin;
+      const fa = frame === 0 ? 0 : 1, fb = frame === 0 ? 1 : 0;
+      px(g, 5, 1, 6, 2, hair); px(g, 4, 3, 8, 3, hair);
+      if (dir === "up") {
+        px(g, 5, 5, 6, 3, hair);
+      } else if (dir === "left") {
+        px(g, 5, 5, 6, 4, skin); px(g, 4, 5, 2, 3, hair); px(g, 6, 6, 1, 1, "#2b1307");
+      } else if (dir === "right") {
+        px(g, 5, 5, 6, 4, skin); px(g, 10, 5, 2, 3, hair); px(g, 9, 6, 1, 1, "#2b1307");
+      } else {
+        px(g, 5, 5, 6, 4, skin); px(g, 6, 6, 1, 1, "#2b1307"); px(g, 9, 6, 1, 1, "#2b1307");
+      }
+      px(g, 4, 9, 8, 7, hood);
+      px(g, 5, 9, 2, 6, hood2);
+      px(g, 3, 10, 1, 5, hood); px(g, 12, 10, 1, 5, hood);
+      px(g, 7, 10, 2, 4, "#0e2c4d");
+      px(g, 5, 16, 3, 3 + fa, pants);
+      px(g, 9, 16, 3, 3 + fb, pants);
+      px(g, 4, 18 + fa, 4, 1, shoe);
+      px(g, 9, 18 + fb, 4, 1, shoe);
+      return c;
+    }
+
+    // 颜色明暗：amt>0 提亮，amt<0 压暗
+    function shade(hex, amt) {
+      const n = parseInt(hex.slice(1), 16);
+      let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+      const f = v => Math.max(0, Math.min(255, Math.round(amt >= 0 ? v + (255 - v) * amt : v * (1 + amt))));
+      return "#" + ((1 << 24) + (f(r) << 16) + (f(g) << 8) + f(b)).toString(16).slice(1);
+    }
+
+    // 列表房 NPC：跟主角（兜帽客）明显不同——护目机器人，按编号上色，胸口留号码牌
+    const NPC_COLORS = ["#f5c542", "#22b3c4", "#39c06a", "#9a6cff", "#ff944d", "#ff6fae", "#19a39a", "#9aa6b2"];
+    function buildNpc(id, frame) {
+      const { c, g } = makeCanvas(16, 20);
+      const body = NPC_COLORS[id % NPC_COLORS.length];
+      const bodyDark = shade(body, -0.45), bodyLite = shade(body, 0.3);
+      const fa = frame === 0 ? 0 : 1, fb = frame === 0 ? 1 : 0;
+      px(g, 8, 0, 1, 2, "#0c1a18"); px(g, 7, 0, 2, 1, bodyLite);   // 天线
+      px(g, 4, 2, 8, 6, "#1b2a2c"); px(g, 5, 2, 6, 1, "#2a4a4c");  // 头壳（方盒，非兜帽）
+      px(g, 4, 4, 8, 3, "#0f3b3a");                                 // 护目镜带
+      px(g, 5, 5, 2, 1, "#39ffe0"); px(g, 9, 5, 2, 1, "#39ffe0");   // 双眼发光
+      px(g, 3, 8, 10, 7, body);                                     // 工服
+      px(g, 3, 8, 2, 7, bodyDark); px(g, 11, 8, 2, 7, bodyDark);    // 两侧阴影
+      px(g, 4, 8, 8, 1, bodyLite);                                  // 肩高光
+      px(g, 5, 9, 6, 5, "#0c1a18");                                 // 胸口号码牌底（号码在外面画）
+      px(g, 3, 14, 10, 1, bodyDark);                                // 腰带
+      px(g, 5, 15, 3, 3 + fa, "#16201f"); px(g, 9, 15, 3, 3 + fb, "#16201f");  // 腿
+      px(g, 4, 17 + fa, 4, 1, "#070b09"); px(g, 9, 17 + fb, 4, 1, "#070b09");  // 脚
+      return c;
+    }
+
+    function drawSprite(sprite, x, y, scale) {
+      ctx.drawImage(sprite, Math.round(x), Math.round(y), Math.round(sprite.width * scale), Math.round(sprite.height * scale));
+    }
+
+    // ================= 画面布局 / DPR =================
+    let scanPattern = null;
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      const W = Math.max(320, Math.floor(window.innerWidth));
+      const H = Math.max(480, Math.floor(window.innerHeight));
+      canvas.width = Math.floor(W * dpr);
+      canvas.height = Math.floor(H * dpr);
+      canvas.style.width = W + "px";
+      canvas.style.height = H + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      state.W = W; state.H = H; state.dpr = dpr;
+      if (!scanPattern) {
+        const { c, g } = makeCanvas(2, 3);
+        px(g, 0, 0, 2, 1, "rgba(0,0,0,0.22)");
+        scanPattern = ctx.createPattern(c, "repeat");
+      }
+    }
+
+    // ================= 音效 =================
+    let audioCtx = null;
+    function tone(freq, dur, type = "square", vol = 0.04, delay = 0) {
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        audioCtx = audioCtx || new AC();
+        if (audioCtx.state === "suspended") audioCtx.resume();
+        const t0 = audioCtx.currentTime + delay;
+        const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+        osc.type = type; osc.frequency.setValueAtTime(freq, t0);
+        gain.gain.setValueAtTime(vol, t0);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(t0); osc.stop(t0 + dur);
+      } catch (e) {}
+    }
+    const sfx = {
+      step() { tone(150 + (state.player.frame ? 28 : 0), 0.04, "square", 0.02); },
+      blocked() { tone(80, 0.05, "sawtooth", 0.02); },
+      start() { tone(330, 0.07, "square", 0.05); tone(520, 0.1, "square", 0.04, 0.07); },
+      vortex() { tone(220, 0.5, "sawtooth", 0.05); tone(110, 0.6, "sine", 0.05, 0.05); },
+      enter() { tone(180, 0.18, "sine", 0.05); tone(360, 0.14, "square", 0.04, 0.05); },
+      bot() { tone(620, 0.05, "square", 0.03); tone(720, 0.05, "square", 0.025, 0.05); },
+      boss() { tone(70, 0.7, "sawtooth", 0.05); tone(104, 0.7, "square", 0.03, 0.02); },
+      alarm() { tone(880, 0.12, "square", 0.045); tone(660, 0.12, "square", 0.04, 0.13); },
+      shutdown() { tone(420, 0.5, "sine", 0.05); tone(150, 0.7, "sine", 0.05, 0.18); }
+    };
+
+    // ================= 标题界面 =================
+    function titleBannerHeight(w) {
+      return Math.round(Math.max(162, Math.min(196, w * 0.45)));
+    }
+    function officeTop(H) {
+      const bannerTop = Math.max(22, H * 0.035);
+      return Math.round(bannerTop + titleBannerHeight(state.W || 360) + 12);
+    }
+    function drawTitle() {
+      const W = state.W, H = state.H;
+      px(ctx, 0, 0, W, H, C.black);
+
+      const sceneTop = officeTop(H);
+      drawOffice(0, sceneTop, W, H - sceneTop);
+      drawTitleBanner(W / 2, Math.max(22, H * 0.035), W);
+
+      const bw = Math.min(248, W * 0.66), bh = 52;
+      const bx = (W - bw) / 2, by = H - Math.max(96, H * 0.13);
+      const glow = 0.45 + state.titleT * 0.4;
+      ctx.save();
+      ctx.shadowColor = "rgba(0,255,102," + glow.toFixed(2) + ")";
+      ctx.shadowBlur = 18;
+      pixelButton(bx, by, bw, bh, "开始修复", C.green, "#06281a", () => beginIntro());
+      ctx.restore();
+      txt(ctx, "STEP INTO BUG", W / 2, by + bh + 12, 12, "#7fffc4", "center", "700");
+      txt(ctx, "17:55 · main.py 等待接入…", W / 2, by + bh + 30, 11, C.greenDim, "center");
+
+      // 存档：已解锁结局徽章
+      if (state.save && state.save.endings) {
+        const e = state.save.endings;
+        if (e.overtime || e.meltdown || e.true) {
+          const oy = officeTop(H) + 8;
+          txt(ctx, "已解锁结局", W / 2, oy, 10, C.greenDim, "center", "700");
+          const badges = [["A 加班", e.overtime, C.amber], ["B 崩溃", e.meltdown, C.red2], ["C 真结局", e.true, C.green2]];
+          ctx.font = '700 11px "Microsoft YaHei","PingFang SC",monospace';
+          const ws = badges.map(b => ctx.measureText((b[1] ? "● " : "○ ") + b[0]).width + 12);
+          const total = ws.reduce((a, b) => a + b, 0);
+          let x = W / 2 - total / 2;
+          for (let i = 0; i < badges.length; i++) {
+            txt(ctx, (badges[i][1] ? "● " : "○ ") + badges[i][0], x, oy + 16, 11, badges[i][1] ? badges[i][2] : "#2a4434", "left", "700");
+            x += ws[i];
+          }
+        }
+      }
+    }
+
+    // 暗黑办公室：远景工位（复用）+ 前景程序员背影
+    function drawOffice(x, y, w, h) {
+      px(ctx, x, y, w, h, "#04080a");
+      // 背景光晕
+      const grad = ctx.createRadialGradient(w * 0.5, y + h * 0.32, 10, w * 0.5, y + h * 0.32, w * 0.7);
+      grad.addColorStop(0, "rgba(0,80,60,0.22)");
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = grad; ctx.fillRect(x, y, w, h);
+
+      // 远景工位三排，越远越小越暗（复用 drawCubicle）
+      const rows = [
+        { cy: y + h * 0.10, s: 0.7, n: 4, a: 0.45 },
+        { cy: y + h * 0.20, s: 0.95, n: 3, a: 0.7 },
+        { cy: y + h * 0.32, s: 1.25, n: 3, a: 1 }
+      ];
+      const lights = [C.greenDim, C.navy2, C.red, C.amber, C.green2];
+      for (const r of rows) {
+        const span = w / r.n;
+        for (let i = 0; i < r.n; i++) {
+          const cx = span * (i + 0.5);
+          drawCubicle(cx, r.cy, r.s, lights[(i + Math.round(r.cy)) % lights.length], r.a);
+        }
+      }
+      // 地面
+      px(ctx, x, y + h * 0.46, w, h * 0.54, "#070b0a");
+      px(ctx, x, y + h * 0.46, w, 2, "#0c1c14");
+
+      // 前景：桌子 + 程序员背影 + 显示器 + 植物
+      drawHeroDesk(w * 0.5, y + h * 0.52, h * 0.46, w);
+    }
+
+    function drawCubicle(cx, cy, s, light, alpha) {
+      ctx.save(); ctx.globalAlpha = alpha;
+      const dw = 34 * s, dh = 22 * s;
+      px(ctx, cx - dw / 2, cy, dw, dh, "#0a1014");          // 隔间桌
+      px(ctx, cx - dw / 2, cy, dw, 2 * s, "#142028");
+      // 显示器
+      px(ctx, cx - 9 * s, cy - 13 * s, 18 * s, 13 * s, "#0b1216");
+      px(ctx, cx - 7 * s, cy - 11 * s, 14 * s, 9 * s, "#03110d");
+      px(ctx, cx - 5 * s, cy - 9 * s, 7 * s, 1.4 * s, light);
+      px(ctx, cx - 5 * s, cy - 6 * s, 9 * s, 1.4 * s, light);
+      px(ctx, cx - 5 * s, cy - 3.5 * s, 5 * s, 1.4 * s, light);
+      // 椅背 + 坐着的人剪影
+      px(ctx, cx - 5 * s, cy + 2 * s, 10 * s, 8 * s, "#05090b");
+      px(ctx, cx - 4 * s, cy - 2 * s, 8 * s, 6 * s, "#0a0d10");
+      ctx.restore();
+    }
+
+    function drawHeroDesk(cx, baseY, sceneH, screenW) {
+      const u = Math.max(3, Math.min(5.2, sceneH / 28)); // 像素单位
+      const deskW = Math.min(screenW * 0.92, 78 * u);
+      const deskY = baseY + 12 * u;
+
+      // 显示器（发绿光，比人宽、比头高，正对我们）
+      const mScale = u * 1.35;
+      const mw = A.monitor.width * mScale, mh = A.monitor.height * mScale;
+      const mx = cx - mw / 2, my = deskY - 2 * u - mh;
+      // 屏幕绿光晕
+      const halo = ctx.createRadialGradient(cx, my + mh * 0.4, 4, cx, my + mh * 0.4, mw * 0.8);
+      halo.addColorStop(0, "rgba(0,255,102,0.30)");
+      halo.addColorStop(1, "rgba(0,255,102,0)");
+      ctx.fillStyle = halo; ctx.fillRect(cx - mw, my - mh * 0.3, mw * 2, mh * 1.8);
+      ctx.save();
+      ctx.shadowColor = "rgba(0,255,102,0.5)"; ctx.shadowBlur = 26;
+      drawSprite(A.monitor, mx, my, mScale);
+      ctx.restore();
+
+      // 桌面（在显示器之前）
+      px(ctx, cx - deskW / 2, deskY, deskW, 5 * u, "#3a2616");
+      px(ctx, cx - deskW / 2, deskY, deskW, 1.4 * u, "#5a3a1f");
+      px(ctx, cx - deskW / 2, deskY + 5 * u, deskW, 2 * u, "#1d130a");
+
+      // 植物（桌左）
+      drawPlant(cx - deskW * 0.40, deskY, u);
+      // 键盘
+      px(ctx, cx - 11 * u, deskY + 1.5 * u, 22 * u, 3 * u, "#10171c");
+      for (let i = 0; i < 9; i++) px(ctx, cx - 10 * u + i * 2.4 * u, deskY + 2 * u, 1.4 * u, 1.4 * u, "#1d2a30");
+
+      // 程序员背影（坐着，挡在显示器下半部分，被绿光勾边）
+      drawProgrammerBack(cx, deskY, u);
+    }
+
+    function drawPlant(cx, deskY, u) {
+      px(ctx, cx - 2.5 * u, deskY - 3 * u, 5 * u, 3.5 * u, "#7a4a24"); // 花盆
+      px(ctx, cx - 2.5 * u, deskY - 3 * u, 5 * u, 1 * u, "#9a6233");
+      px(ctx, cx - 1 * u, deskY - 7 * u, 2 * u, 4 * u, C.greenDim);
+      px(ctx, cx - 3 * u, deskY - 6 * u, 2 * u, 3 * u, C.greenDark);
+      px(ctx, cx + 1 * u, deskY - 6.5 * u, 2 * u, 3.5 * u, "#0d6a34");
+      px(ctx, cx - 0.5 * u, deskY - 8.5 * u, 1.4 * u, 2 * u, C.green2);
+    }
+
+    function drawProgrammerBack(cx, deskY, u) {
+      const headW = 11 * u, headH = 9 * u;
+      const bodyY = deskY - 13 * u;
+      // 椅背
+      px(ctx, cx - 11 * u, bodyY - 2 * u, 22 * u, 22 * u, "#0a0d10");
+      px(ctx, cx - 11 * u, bodyY - 2 * u, 22 * u, 2 * u, "#11161a");
+      // 身体（连帽衫）
+      px(ctx, cx - 9 * u, bodyY, 18 * u, 16 * u, C.navy);
+      px(ctx, cx - 9 * u, bodyY, 18 * u, 2 * u, C.navy2);
+      px(ctx, cx - 9 * u, bodyY + 2 * u, 2 * u, 12 * u, "#0e2c4d"); // 手臂
+      px(ctx, cx + 7 * u, bodyY + 2 * u, 2 * u, 12 * u, "#0e2c4d");
+      // 帽兜
+      px(ctx, cx - 7 * u, bodyY - 1 * u, 14 * u, 3 * u, "#0e2c4d");
+      // 头 + 头发
+      px(ctx, cx - headW / 2, bodyY - headH, headW, headH, C.skin);
+      px(ctx, cx - headW / 2 - u, bodyY - headH - u, headW + 2 * u, headH * 0.8, "#15131a");
+      px(ctx, cx - headW / 2, bodyY - headH, headW, 2.5 * u, "#15131a");
+      px(ctx, cx - headW / 2 - u, bodyY - headH * 0.6, 1.5 * u, headH * 0.7, "#15131a");
+      px(ctx, cx + headW / 2 - 0.5 * u, bodyY - headH * 0.6, 1.5 * u, headH * 0.7, "#15131a");
+    }
+
+    function drawTitleBanner(cx, y, w) {
+      const bw = Math.min(430, w * 0.96), bh = titleBannerHeight(w), bx = cx - bw / 2;
+      const u = bw / 390;
+
+      ctx.save();
+      ctx.translate(0, Math.round(Math.sin(state.t * 2.2) * 1.2));
+
+      // 封面感的黑色不规则招牌底，不碰下方办公室美术。
+      ctx.save();
+      ctx.shadowColor = "rgba(0,185,199,0.28)";
+      ctx.shadowBlur = 18;
+      titlePlate(bx + 8 * u, y + 28 * u, bw - 16 * u, bh - 30 * u, "#020504", C.cyanDim, 3);
+      ctx.restore();
+      titlePlate(bx + 13 * u, y + 33 * u, bw - 26 * u, bh - 42 * u, "rgba(1,9,8,0.92)", "#04282d", 2);
+
+      // 顶部电路、代码符号和中心 bug，呼应示意图的招牌结构。
+      ctx.strokeStyle = C.cyan; ctx.lineWidth = Math.max(2, 3 * u);
+      ctx.beginPath();
+      ctx.moveTo(bx + 34 * u, y + 30 * u);
+      ctx.lineTo(bx + 110 * u, y + 30 * u);
+      ctx.lineTo(bx + 124 * u, y + 42 * u);
+      ctx.lineTo(cx - 32 * u, y + 42 * u);
+      ctx.moveTo(cx + 32 * u, y + 42 * u);
+      ctx.lineTo(bx + bw - 124 * u, y + 42 * u);
+      ctx.lineTo(bx + bw - 110 * u, y + 30 * u);
+      ctx.lineTo(bx + bw - 34 * u, y + 30 * u);
+      ctx.stroke();
+      node(bx + 34 * u, y + 30 * u); node(bx + 124 * u, y + 42 * u);
+      node(bx + bw - 34 * u, y + 30 * u); node(bx + bw - 124 * u, y + 42 * u);
+      txt(ctx, "<|>", bx + 22 * u, y + 38 * u, Math.max(18, 22 * u), C.cyan, "left", "900");
+      txt(ctx, "{ }", bx + bw - 22 * u, y + 38 * u, Math.max(18, 22 * u), C.cyan, "right", "900");
+      drawSprite(A.bug, cx - 15 * u, y + 6 * u, 1.9 * u);
+
+      // 真像素标题：字形采样成矩形块，边缘完全硬，不走字体抗锯齿。
+      blockTitleText(
+        [{ s: "改完最后一个", fill: C.cream }],
+        cx,
+        y + bh * 0.30,
+        62,
+        { rows: 40, maxW: bw - 54 * u, coverage: 0.19, outline: "#020302", shadow: { x: 3, y: 3, fill: "#00191b" } }
+      );
+      blockTitleText(
+        [{ s: "bug", fill: C.red }, { s: " 再下班", fill: "#ffc400" }],
+        cx,
+        y + bh * 0.58,
+        66,
+        { rows: 40, maxW: bw - 54 * u, coverage: 0.15, outline: "#020302", shadow: { x: 3, y: 3, fill: "#180305" } }
+      );
+
+      // 底部电路引脚
+      ctx.strokeStyle = "rgba(0,185,199,0.78)"; ctx.lineWidth = Math.max(2, 2.5 * u);
+      for (const dx of [-64, -22, 22, 64]) {
+        const x0 = cx + dx * u, y0 = y + bh - 20 * u;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0); ctx.lineTo(x0, y0 + 14 * u);
+        ctx.stroke();
+        node(x0, y0 + 18 * u);
+      }
+      ctx.restore();
+    }
+
+    function titlePlate(x, y, w, h, fill, stroke, lineW) {
+      ctx.beginPath();
+      ctx.moveTo(x + 22, y + 8);
+      ctx.lineTo(x + w * 0.34, y);
+      ctx.lineTo(x + w * 0.42, y + 12);
+      ctx.lineTo(x + w * 0.58, y + 12);
+      ctx.lineTo(x + w * 0.66, y);
+      ctx.lineTo(x + w - 22, y + 8);
+      ctx.lineTo(x + w - 6, y + h * 0.42);
+      ctx.lineTo(x + w - 14, y + h - 10);
+      ctx.lineTo(x + w * 0.68, y + h - 4);
+      ctx.lineTo(x + w * 0.58, y + h - 14);
+      ctx.lineTo(x + w * 0.42, y + h - 14);
+      ctx.lineTo(x + w * 0.32, y + h - 4);
+      ctx.lineTo(x + 14, y + h - 10);
+      ctx.lineTo(x + 6, y + h * 0.42);
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lineW;
+      ctx.stroke();
+    }
+
+    function corner(x, y, len, ydir) {
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y);
+      ctx.moveTo(x, y); ctx.lineTo(x, y + 12 * ydir); ctx.stroke();
+    }
+    function node(x, y) { ctx.fillStyle = C.cyan; ctx.fillRect(x - 2, y - 2, 4, 4); }
+
+    // ================= 过场动画 =================
+    function beginIntro() {
+      state.scene = "intro"; state.introPhase = "dialogue"; state.introT = 0; state.introStep = 0;
+      sfx.start();
+    }
+    function introToVortex() {
+      if (state.introPhase !== "dialogue") return;
+      if (state.introStep < INTRO_PAGES.length - 1) {
+        state.introStep += 1;
+        sfx.bot();
+        return;
+      }
+      state.introPhase = "vortex"; state.introT = 0; sfx.vortex();
+    }
+    function drawIntro() {
+      const W = state.W, H = state.H;
+      px(ctx, 0, 0, W, H, C.black);
+      if (state.introPhase === "dialogue") {
+        const ot = officeTop(H);
+        drawOffice(0, ot, W, H - ot);
+        const page = INTRO_PAGES[state.introStep] || INTRO_PAGES[0];
+        const bw = Math.min(330, W * 0.86), bx = (W - bw) / 2, by = H * 0.16;
+        px(ctx, bx, by, bw, 96, "rgba(6,16,11,0.95)");
+        ctx.strokeStyle = C.greenDim; ctx.lineWidth = 2; ctx.strokeRect(bx + 1, by + 1, bw - 2, 94);
+        txt(ctx, "▌" + page.speaker, bx + 14, by + 12, 12, C.green2, "left", "700");
+        for (let i = 0; i < page.lines.length; i++) {
+          txt(ctx, page.lines[i], bx + 14, by + 38 + i * 24, 15, C.cream, "left", "700");
+        }
+        const blink = (Math.sin(state.t * 4) + 1) / 2;
+        ctx.save(); ctx.globalAlpha = 0.45 + blink * 0.55;
+        txt(ctx, "▶ 点击继续", W / 2, H - 64, 12, C.green2, "center", "700");
+        ctx.restore();
+      } else {
+        const p = state.introT, k = Math.min(1, p / 1.0);
+        ctx.save();
+        ctx.translate(W / 2, H / 2);
+        const rings = 26;
+        for (let i = 0; i < rings; i++) {
+          const a = (i / rings) * Math.PI * 2 + p * 5;
+          const r = (1 - k) * (Math.max(W, H)) * (0.05 + i / rings);
+          ctx.strokeStyle = i % 2 ? `rgba(0,255,102,${(0.5 * k).toFixed(2)})` : `rgba(0,185,199,${(0.4 * k).toFixed(2)})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(Math.cos(a) * r * 0.15, Math.sin(a) * r * 0.15, r * 0.6, a, a + 1.6);
+          ctx.stroke();
+        }
+        ctx.restore();
+        ctx.fillStyle = `rgba(2,8,5,${(k * 0.85).toFixed(2)})`;
+        ctx.fillRect(0, 0, W, H);
+        txt(ctx, "step_into(main.py)", W / 2, H / 2 - 8, 14, C.green2, "center", "700");
+        if (p >= 1.0) enterGame();
+      }
+    }
+    function enterGame() {
+      state.openedFiles = ["main.py"];
+      state.cpuHeat = 35; state.techDebt = 0; state.shards = 0; state.gameTime = 0;
+      state.heatDrift = 0; state.heatProgress = 0; state.heatStoryT = 0; state.heatStoryStep = 0;
+      state.insight = 0; state.streak = 0; state.comboUntil = 0; state.bugHits = 0;
+      state.heatBossTriggered = false; state.heatWarned = false; state.lastBugHitAt = -9; state.hitBugs = [];
+      state.inventory = []; state.codeOverrides = {}; state.pickedUp = []; state.fx = [];
+      state.focusSeen = []; state.solvedFocus = []; state.lessonSeen = []; state.quizAnswered = [];
+      state.quiz = { open: false, key: "", fp: null, selected: -1, answered: false };
+      state.compare = null;
+      state.help = { open: false };
+      state.guideMode = "auto";
+      state.patchGraceUsed = false;
+      state.patchUnlocked = false;
+      state.rollbackUnlocked = false;
+      state.evidence = [];
+      state.trace = [];
+      state.terminalsSeen = [];
+      state.hiddenGateT = 0;
+      state.callStack = ["main.py"];
+      state.lastMoveAt = state.t;
+      state.checkpoint = null; state.inv.open = false; state.inv.boss = false;
+      state.mainBreak = false; state.peek = { open: false };
+      state.npc = null; state.npcPick = { open: false };
+      state.dlg = null; state.dlgSeen = []; state.sysMsg = null;
+      state.corridor = { t: 0, revealed: false };
+      state.boss = { t: 0, bullets: [], spawnT: 0, won: false, flash: 0 };
+      loadFile("main.py");
+      state.scene = "game";
+      saveCheckpoint();
+      checkDialogue(state.player.gx, state.player.gy);   // 出生点：bot 说代码里的第一句（init 高亮）
+      sfx.enter();
+    }
+
+    // 加载/切换文件：地图、源码、面包屑随之更新，主角传送到入口
+    function loadFile(name) {
+      const fresh = !state.openedFiles.includes(name);
+      state.activeFile = name;
+      state.map = getMap(name);
+      if (!state.openedFiles.includes(name)) state.openedFiles.push(name);
+      const sp = state.map.spawn, p = state.player;
+      p.gx = sp.x; p.gy = sp.y; p.fx = sp.x; p.fy = sp.y;
+      p.moving = false; p.anim = 0; p.frame = 0; p.dir = "down";
+      state.held = null;
+      state.mode = "explore"; state.focus = null;
+      if (name === "main.py" && !state.npc) state.npc = { list: [0, 1, 2, 3, 4, 5, 6], win: false, flash: 0, preview: null, pos: null };
+      if (fresh && name !== "main.py") {
+        gainInsight(12, "新文件");
+        pushTrace("OPEN " + name, C.green2);
+        progressHeat(PROGRESS_HEAT.file, "open " + name);
+        addGameTime(0.3, "进入 " + name);
+      }
+    }
+    function switchTab(name) {
+      if (name === state.activeFile) return;
+      loadFile(name);
+      sfx.enter();
+      showBot(FILES[name].intro, 4.5);
+    }
+    function transitionToFile(name) {
+      if (!name || !MAPS[name]) { showBot(BOT_LINES.doorLocked); return; }
+      state.scene = "file_transition";
+      state.ftT = 0; state.ftTo = name; state.ftLoaded = false;
+      sfx.vortex();
+    }
+
+    // ---- 收束态 focus ----
+    function focusAt(x, y) {
+      const f = FILES[state.activeFile].focus;
+      return f ? (f.find(p => p.x === x && p.y === y) || null) : null;
+    }
+    function focusKey(fp) { return state.activeFile + ":" + fp.line + ":" + fp.label; }
+    function quizKey(fp) { return focusKey(fp) + ":quiz"; }
+    function focusSolved(fp) { return state.solvedFocus.includes(focusKey(fp)); }
+    function markFocusSolved(fp) {
+      const key = focusKey(fp);
+      if (!state.solvedFocus.includes(key)) state.solvedFocus.push(key);
+      if (fp.evidence) addEvidence(fp.evidence, fp.label);
+    }
+    function addEvidence(key, label) {
+      if (!key || state.evidence.includes(key)) return;
+      state.evidence.push(key);
+      addFx("证据 +" + (label || key), C.cyan);
+      pushTrace("EVIDENCE " + key, C.cyan);
+      progressHeat(PROGRESS_HEAT.evidence, "evidence");
+    }
+    function hasEvidence(key) { return state.evidence.includes(key); }
+    function hasRootShard() { return state.inventory.includes("# scan should be read-only") || state.inventory.includes("return bugs"); }
+    function scannerGateOpen() { return hasEvidence("fixed_state") && hasEvidence("auto_append") && hasRootShard(); }
+    function hiddenGateMissing() {
+      const missing = [];
+      if (!hasEvidence("fixed_state")) missing.push("bug.fixed 证据");
+      if (!hasEvidence("auto_append")) missing.push("AUTO_APPEND 证据");
+      if (!hasRootShard()) missing.push("根因碎片");
+      return missing;
+    }
+    function openQuiz(fp) {
+      if (!fp.quiz) return;
+      const key = quizKey(fp);
+      if (state.quizAnswered.includes(key)) return;
+      state.quiz = { open: true, key, fp, selected: -1, answered: false };
+    }
+    function answerQuiz(i) {
+      const q = state.quiz.fp && state.quiz.fp.quiz;
+      if (!q || state.quiz.answered) return;
+      state.quiz.selected = i;
+      state.quiz.answered = true;
+      if (!state.quizAnswered.includes(state.quiz.key)) state.quizAnswered.push(state.quiz.key);
+      if (state.quiz.fp && state.quiz.fp.evidence) addEvidence(state.quiz.fp.evidence, state.quiz.fp.label);
+      if (i === q.answer) {
+        gainInsight(12, "预测正确");
+        sfx.enter();
+      } else {
+        gainInsight(4, "预测修正");
+        sfx.blocked();
+      }
+    }
+    function closeQuiz() {
+      if (!state.quiz.open) return;
+      if (!state.quiz.answered) { sfx.blocked(); return; }
+      state.quiz = { open: false, key: "", fp: null, selected: -1, answered: false };
+    }
+    function pushCallStack(label) {
+      if (!label) return;
+      if (state.callStack[state.callStack.length - 1] !== label) state.callStack.push(label);
+      if (state.callStack.length > 4) state.callStack = state.callStack.slice(-4);
+    }
+    function enterFocus(fp) {
+      state.mode = "focus"; state.focus = fp; state.focusT = 0;
+      state.held = null;
+      sfx.enter();
+      const key = focusKey(fp);
+      if (!state.focusSeen.includes(key)) {
+        state.focusSeen.push(key);
+        gainInsight(8, "观察");
+      }
+      openQuiz(fp);
+      showBot(fp.hint, 6);
+    }
+    function exitFocus() { state.mode = "explore"; state.focus = null; }
+    function doFocusAction(key) {
+      const fp = state.focus;
+      if (!fp) return;
+      if (state.quiz.open) {
+        sfx.blocked();
+        showBot(state.quiz.answered ? "先点「继续调试」，再执行动作。" : "先做一个预测，再执行调试动作。", 3.5);
+        return;
+      }
+      if (key === "run") {
+        exitFocus(); sfx.bot();
+        if (fp.runHeat) {
+          raiseHeat(fp.runHeat, "run()");
+          showBot(BOT_LINES.cpuWarn, 5);
+        } else if (!fp.action && !fp.patchable) {
+          markFocusSolved(fp);
+          gainInsight(10, "看懂分支");
+          showBot("这条分支已经看懂了。现在去找发光文件门，继续追调用链。", 4.5);
+        } else {
+          state.streak = 0;
+          addFx("线索擦肩而过", C.amber);
+          showBot(BOT_LINES.runSkim, 4);
+        }
+        return;
+      }
+      if (key === "rollback") { doRollback(); return; }
+      if (key === "patch") {
+        if (!fp.patchable) { sfx.blocked(); showBot("这一行不能打补丁，试试 step_into()。", 4); return; }
+        if (state.inventory.length === 0) { sfx.blocked(); showBot("背包里还没有碎片，先去地图上捡发光的 </> 碎片。", 4); return; }
+        openInv("pick"); return;
+      }
+      if (key === "step") {
+        if (fp.action !== "step") { sfx.blocked(); return; }
+        if (fp.locked) { sfx.blocked(); showBot(BOT_LINES.lockedDive, 4); return; }
+        if (fp.hiddenGate && !scannerGateOpen()) {
+          const missing = hiddenGateMissing();
+          state.hiddenGateT = state.t + 2.2;
+          state.streak = 0;
+          pushTrace("LOCK scanner.py missing: " + missing.join(" / "), C.amber);
+          addFx("隐藏入口未解密", C.amber);
+          sfx.blocked();
+          showBot("scanner.py 不是普通门。还缺：" + missing.join("、") + "。先回证据房补齐，再来 step_into()。", 7);
+          return;
+        }
+        markFocusSolved(fp);
+        gainInsight(fp.to === "scanner.py" ? 35 : 18, fp.to === "scanner.py" ? "隐藏调用" : "step_into");
+        pushCallStack(fp.stack || fp.to);
+        pushTrace("STEP " + state.activeFile + " -> " + (fp.stack || fp.to), C.green2);
+        progressHeat(PROGRESS_HEAT.step, "step_into");
+        if (fp.to === "scanner.py") { exitFocus(); enterCorridor(); return; }
+        const to = fp.to; exitFocus(); transitionToFile(to); return;
+      }
+    }
+
+    // ---- 碎片 / 补丁 / 技术债 / rollback ----
+    function pickupKey(p) { return state.activeFile + ":" + p.x + ":" + p.y; }
+    function pickupAt(x, y) {
+      const ps = FILES[state.activeFile].pickups;
+      if (!ps) return null;
+      return ps.find(p => p.x === x && p.y === y && !state.pickedUp.includes(pickupKey(p))) || null;
+    }
+    function terminalKey(x, y) { return state.activeFile + ":" + x + ":" + y; }
+    function terminalAt(x, y) {
+      const c = state.map && state.map.grid[y] && state.map.grid[y][x];
+      return c === "T" || c === "L" ? c : null;
+    }
+    function handleTerminalContact(x, y) {
+      const type = terminalAt(x, y);
+      if (!type) return;
+      const key = terminalKey(x, y);
+      if (state.terminalsSeen.includes(key)) return;
+      state.terminalsSeen.push(key);
+      if (type === "L") {
+        state.hiddenGateT = state.t + 2.2;
+        pushTrace("LOCK PANEL " + hiddenGateMissing().join(" / "), C.amber);
+        addFx("锁台扫描", C.amber);
+        showBot("锁台提示：隐藏入口不是门，是证据锁。需要状态证据、配置证据和根因碎片。", 6);
+      } else {
+        const trace = terminalTrace();
+        pushTrace(trace, C.cyan);
+        progressHeat(PROGRESS_HEAT.terminal, "trace");
+        gainInsight(6, "trace");
+        showBot("终端吐出一条 trace：" + trace, 5);
+      }
+    }
+    function terminalTrace() {
+      if (state.activeFile === "main.py") return "while True 不写 break 就停不下来";
+      if (state.activeFile === "bug_model.py") return "BugReport.fixed starts False";
+      if (state.activeFile === "backlog.py") return "scan() mutates list length";
+      if (state.activeFile === "config.py") return "AUTO_APPEND controls scanner_policy()";
+      if (state.activeFile === "fixer.py") return "quick_patch returns text only";
+      if (state.activeFile === "verifier.py") return "verifier trusts patch string";
+      if (state.activeFile === "runtime_guard.py") return "RuntimeError swallowed by pass";
+      return "trace unavailable";
+    }
+    function collect(p) {
+      state.pickedUp.push(pickupKey(p));
+      state.inventory.push(p.frag);
+      state.shards = Math.min(7, state.shards + 1);
+      state.patchUnlocked = true;
+      sfx.bot();
+      addFx("拾取  " + p.frag, C.green2);
+      pushTrace("PICKUP " + p.frag, C.green2);
+      progressHeat(PROGRESS_HEAT.shard, "pickup");
+      gainInsight(5, "线索");
+      showBot("捡到碎片：" + p.frag + "。在收束态用 patch() 把它贴到代码行上。", 5);
+    }
+    function addFx(text, color) {
+      state.fx.push({ text, color: color || C.green2, t: 0 });
+      if (state.fx.length > 4) state.fx.shift();
+    }
+    function pushTrace(text, color) {
+      state.trace.push({ text, color: color || C.green2, t: state.t });
+      if (state.trace.length > 6) state.trace.shift();
+    }
+    function raiseHeat(amount, reason) {
+      const before = state.cpuHeat;
+      state.cpuHeat = Math.min(130, state.cpuHeat + amount);
+      addFx("CPU +" + amount + "°C" + (reason ? " · " + reason : ""), state.cpuHeat >= HEAT_BOSS_THRESHOLD ? C.red2 : C.amber);
+      if (!state.heatWarned && before < 60 && state.cpuHeat >= 60) {
+        state.heatWarned = true;
+        showBot("CPU 到危险区了。它会继续自己升温，红区会强制进入抢救战。", 5);
+      }
+      checkMeltdown();
+    }
+    function progressHeat(amount, reason) {
+      if (state.heatBossTriggered || (state.scene !== "game" && state.scene !== "file_transition")) return;
+      state.heatProgress += amount;
+      const whole = Math.floor(state.heatProgress);
+      if (whole <= 0) return;
+      state.heatProgress -= whole;
+      state.cpuHeat = Math.min(130, state.cpuHeat + whole);
+      pushTrace("HEAT +" + whole + " " + reason, state.cpuHeat >= HEAT_BOSS_THRESHOLD ? C.red2 : C.amber);
+      if (state.cpuHeat >= 68 && state.cpuHeat < HEAT_BOSS_THRESHOLD && !state.heatWarned) {
+        state.heatWarned = true;
+        showBot("CPU 正在随调试进度升温。不是地图入口，红区会强制抢救。", 5);
+      }
+      checkMeltdown();
+    }
+    function updatePassiveHeat(dt) {
+      // 设定改变：温度/时间只随"进度"增加（见 progressHeat / addGameTime），不再随挂机时间空涨。
+      // 这里只盯红线，不再被动加温。
+      if (state.scene !== "game") return;
+      checkMeltdown();
+    }
+    // 时间随"进度"增加（不随挂机时间流逝）；超过阈值后触发睡意 Boss（待接）
+    function addGameTime(h, reason) {
+      state.gameTime = Math.round((state.gameTime + h) * 10) / 10;
+      addFx("时间 +" + h + "h" + (reason ? " · " + reason : ""), C.cyan);
+      pushTrace("TIME +" + h + (reason ? " " + reason : ""), C.cyan);
+    }
+    function gainInsight(points, label) {
+      state.insight = Math.min(999, state.insight + points);
+      state.streak = Math.min(9, state.streak + 1);
+      state.comboUntil = state.t + 1.2;
+      addFx("+" + points + " IDEA" + (label ? " · " + label : ""), state.streak >= 3 ? C.amber : C.green2);
+      if (state.streak >= 3) addFx("连击 x" + state.streak, C.amber);
+    }
+    function codeLineOf(file, idx) {
+      const ov = state.codeOverrides[file];
+      return (ov && ov[idx] != null) ? ov[idx] : CODE[file][idx];
+    }
+    function snapshot() {
+      return {
+        file: state.activeFile, gx: state.player.gx, gy: state.player.gy,
+        techDebt: state.techDebt, cpuHeat: state.cpuHeat, shards: state.shards, gameTime: state.gameTime,
+        heatDrift: state.heatDrift, heatProgress: state.heatProgress,
+        insight: state.insight, streak: state.streak, bugHits: state.bugHits,
+        heatBossTriggered: state.heatBossTriggered, heatWarned: state.heatWarned, lastBugHitAt: state.lastBugHitAt,
+        hitBugs: state.hitBugs.slice(),
+        inventory: state.inventory.slice(),
+        pickedUp: state.pickedUp.slice(),
+        mainBreak: state.mainBreak,
+        openedFiles: state.openedFiles.slice(),
+        focusSeen: state.focusSeen.slice(),
+        solvedFocus: state.solvedFocus.slice(),
+        lessonSeen: state.lessonSeen.slice(),
+        quizAnswered: state.quizAnswered.slice(),
+        callStack: state.callStack.slice(),
+        evidence: state.evidence.slice(),
+        trace: state.trace.slice(),
+        terminalsSeen: state.terminalsSeen.slice(),
+        hiddenGateT: state.hiddenGateT,
+        patchGraceUsed: state.patchGraceUsed,
+        patchUnlocked: state.patchUnlocked,
+        rollbackUnlocked: state.rollbackUnlocked,
+        guideMode: state.guideMode,
+        overrides: JSON.parse(JSON.stringify(state.codeOverrides))
+      };
+    }
+    function saveCheckpoint() { state.checkpoint = snapshot(); }
+    function doRollback() {
+      const cp = state.checkpoint;
+      if (!cp) { sfx.bot(); showBot("还没有 checkpoint。进房间、打补丁前会自动存档。", 4); return; }
+      state.openedFiles = cp.openedFiles.slice();
+      loadFile(cp.file);
+      const p = state.player;
+      p.gx = cp.gx; p.gy = cp.gy; p.fx = cp.gx; p.fy = cp.gy;
+      state.techDebt = cp.techDebt; state.cpuHeat = cp.cpuHeat; state.shards = cp.shards; state.gameTime = cp.gameTime || 0;
+      state.heatDrift = cp.heatDrift; state.heatProgress = cp.heatProgress;
+      state.insight = cp.insight; state.streak = cp.streak; state.bugHits = cp.bugHits;
+      state.heatBossTriggered = cp.heatBossTriggered; state.heatWarned = cp.heatWarned; state.lastBugHitAt = cp.lastBugHitAt;
+      state.hitBugs = cp.hitBugs.slice();
+      state.inventory = cp.inventory.slice();
+      state.pickedUp = cp.pickedUp.slice();
+      state.mainBreak = !!cp.mainBreak;
+      state.focusSeen = cp.focusSeen.slice();
+      state.solvedFocus = cp.solvedFocus.slice();
+      state.lessonSeen = cp.lessonSeen.slice();
+      state.quizAnswered = cp.quizAnswered.slice();
+      state.quiz = { open: false, key: "", fp: null, selected: -1, answered: false };
+      state.compare = null;
+      state.help = { open: false };
+      state.evidence = cp.evidence.slice();
+      state.trace = cp.trace.slice();
+      state.terminalsSeen = cp.terminalsSeen.slice();
+      state.hiddenGateT = cp.hiddenGateT;
+      state.patchGraceUsed = cp.patchGraceUsed;
+      state.patchUnlocked = cp.patchUnlocked;
+      state.rollbackUnlocked = cp.rollbackUnlocked;
+      state.guideMode = cp.guideMode;
+      state.callStack = cp.callStack.slice();
+      state.codeOverrides = JSON.parse(JSON.stringify(cp.overrides));
+      state.checkpoint = null;
+      sfx.enter();
+      addFx("rollback() → checkpoint", C.cyan);
+      if (state.activeFile === "main.py" && !state.mainBreak) {
+        // 用 rollback 硬跳出死循环：代价很大；其实只要一块 break
+        raiseHeat(12, "rollback 强行跳出循环");
+        showBot("rollback 把你整个拽回开头，CPU 一下就窜上去了。其实只缺一块 break。", 6);
+      } else {
+        showBot("rollback() 读回了上一个存档点。真实调试器可没有后悔药。", 5);
+      }
+    }
+    function applyPatch(frag) {
+      const fp = state.focus;
+      if (!fp) return;
+      if (fp.npcConsole) { handleNpcOp(frag); return; }   // 列表房：append/insert/remove 操作 NPC 列表
+      saveCheckpoint();
+      const file = state.activeFile;
+      if (!state.codeOverrides[file]) state.codeOverrides[file] = {};
+      const spec = fp.patch;
+      const isCorrect = spec && spec.correct && spec.correct.includes(frag);
+      const consumeFrag = () => {
+        const i = state.inventory.indexOf(frag);
+        if (i >= 0) state.inventory.splice(i, 1);
+        state.shards = Math.max(0, state.shards - 1);
+      };
+      // 特定碎片（如 continue）：把它当真"运行"，演出后果，但不消耗碎片，可反复试
+      if (!isCorrect && spec && spec.altHints && spec.altHints[frag]) {
+        sfx.blocked();
+        closeInv();
+        if (spec.altBounce) {
+          // continue 会跳过本次循环剩下的部分、回到 while 开头 → 把你弹回出生点
+          exitFocus();
+          addGameTime(0.2, "continue 又转一圈");
+          raiseHeat(3, "continue 空转");
+          const sp = state.map.spawn, p = state.player;
+          p.gx = sp.x; p.gy = sp.y; p.fx = sp.x; p.fy = sp.y; p.moving = false; p.dir = "up";
+          addFx("continue → 回到循环开头", C.amber);
+        } else {
+          addFx("先别急", C.amber);
+        }
+        showBot(spec.altHints[frag], 7);
+        return;
+      }
+      if (isCorrect) {
+        consumeFrag();
+        // 正确补丁：行变绿、不涨债务、可降温、解释卡
+        state.codeOverrides[file][fp.line - 1] = spec.green;
+        if (spec.unlockLoop) state.mainBreak = true; // break 补上，while 循环门打开
+        if (spec.heatFix) state.cpuHeat = Math.max(30, state.cpuHeat + spec.heatFix);
+        if (spec.compare) state.compare = spec.compare;
+        markFocusSolved(fp);
+        gainInsight(30, "真修复");
+        progressHeat(PROGRESS_HEAT.fix, "patch");
+        addFx("✓ 修复", C.green2);
+        pushTrace("PATCH OK " + file + ":" + fp.line + " -> " + frag, C.green2);
+        if (spec.heatFix) addFx("CPU " + spec.heatFix + "°C", C.green2);
+        sfx.enter();
+        closeInv(); exitFocus();
+        showBot(spec.explain, 6);
+      } else {
+        if (!state.patchGraceUsed) {
+          state.patchGraceUsed = true;
+          state.rollbackUnlocked = true;
+          state.streak = 0;
+          addFx("教学保护：碎片返还", C.amber);
+          pushTrace("PATCH TRIAL refunded: " + frag, C.amber);
+          sfx.blocked();
+          closeInv();
+          showBot("这次不算技术债，也不消耗碎片。先看这行真正要验证什么，再试一次 patch()。", 6);
+          return;
+        }
+        consumeFrag();
+        state.rollbackUnlocked = true;
+        // 错误 / 浅层补丁：注释化、涨债务、升温
+        const indent = (CODE[file][fp.line - 1].match(/^\s*/) || [""])[0];
+        state.codeOverrides[file][fp.line - 1] = indent + (frag.trim().startsWith("#") ? frag.trim() : "# " + frag.trim());
+        state.techDebt += 1;
+        addGameTime(0.5, "返工");
+        state.streak = 0;
+        addFx("+1 DEBT", C.red2);
+        pushTrace("PATCH WRONG " + file + ":" + fp.line + " -> " + frag, C.red2);
+        raiseHeat(8, "补丁反噬");
+        sfx.blocked();
+        closeInv(); exitFocus();
+        showBot(spec ? "这不是对的碎片。" + BOT_LINES.patchShallow : BOT_LINES.patchShallow, 6);
+      }
+    }
+    // ===== 列表房：操作 NPC 列表 =====
+    // 每个下标对应房里一个固定站位（散布，不排队）；下标 0 永远是门口那格。
+    function npcTargetSlot(n, idx) {
+      const slots = FILES["main.py"].npc.slots;
+      const shift = (n.preview != null && idx >= n.preview) ? 1 : 0;   // insert 预览：i 及之后的人往后让一位
+      return slots[Math.min(idx + shift, slots.length - 1)];
+    }
+    function npcBlocksTile(nx, ny) {                 // NPC 当前占着的下标格挡路
+      const n = state.npc; if (!n || n.win) return false;
+      for (let idx = 0; idx < n.list.length; idx++) {
+        const s = npcTargetSlot(n, idx);
+        if (s.x === nx && s.y === ny) return true;
+      }
+      return false;
+    }
+    function teleportPlayer(x, y, dir) {             // 瞬移：插入/落点用
+      const p = state.player;
+      p.gx = x; p.gy = y; p.fx = x; p.fy = y; p.moving = false; p.dir = dir || p.dir;
+    }
+    function handleNpcOp(frag) {
+      closeInv();
+      const n = state.npc;
+      if (!n || n.win) { exitFocus(); return; }
+      n.preview = null;                               // 任何新操作前，先让队伍归位
+      if (frag === "remove") {
+        if (n.list.length === 0) { showBot("已经没人可删了。", 4); return; }
+        const id = n.list.shift();          // 删掉门口（下标 0）那个，后面的人下标各往前挪一位
+        n.flash = state.t + 0.5; sfx.step(); addFx("remove N" + id, C.amber);
+        if (n.list.length === 0) npcWin("NPCs 全删光了，门口空出来——门通了！");
+        else showBot("NPCs.remove('N" + id + "') 删掉了门口那个 N" + id + "，后面每个人的下标都往前挪一位。还剩 " + n.list.length + " 个。", 6);
+      } else if (frag === "append") {
+        const end = n.list.length;          // append 落到末尾（下标 = 当前长度）
+        n.flash = state.t + 0.5; sfx.bot(); addFx("append → 下标 " + end, C.amber);
+        exitFocus();
+        teleportPlayer(FILES["main.py"].npc.slots[Math.min(end, 7)].x, FILES["main.py"].npc.slots[Math.min(end, 7)].y, "down");
+        showBot("append('ME') 把你加到末尾——下标 " + end + "（那块写着 7 的地)，离门最远。门在下标 0，试试 insert 到 0。", 6);
+      } else if (frag === "insert") {
+        state.npcPick = { open: true };     // 选一个下标插进去
+      } else {
+        sfx.blocked(); showBot("这块碎片在列表房用不上。手头有 remove / insert / append。", 4);
+      }
+    }
+    function npcInsert(i) {
+      state.npcPick = { open: false };
+      const n = state.npc; if (!n || n.win) return;
+      if (i === 0) { npcWin("insert(0,'ME') 把你插到下标 0，原来的 0 号被挤到下标 1——你正好顶在门口，门通了！"); return; }
+      // 非 0：把你瞬移到下标 i 的站位，i 及之后的 NPC 都让到后一个下标的位置
+      n.preview = i; n.flash = state.t + 0.5; sfx.bot(); addFx("insert 到下标 " + i, C.amber);
+      exitFocus();
+      const s = FILES["main.py"].npc.slots[Math.min(i, 7)];
+      teleportPlayer(s.x, s.y, "up");
+      showBot("insert(" + i + ",'ME') 把你插到下标 " + i + "，后面的人各让一位。可门在下标 0，0 号还堵着——走回去 insert 到 0 才行。", 7);
+    }
+    function npcWin(msg) {
+      const n = state.npc; n.win = true; n.preview = null;
+      exitFocus(); closeInv(); sfx.enter(); addFx("门通了", C.green2);
+      progressHeat(PROGRESS_HEAT.fix, "list room"); gainInsight(30, "列表通关");
+      const cfg = FILES["main.py"].npc;     // 挪到门正下方那格，走上去出门
+      teleportPlayer(cfg.plug.x, cfg.plug.y, "up");
+      showBot(msg, 6);
+    }
+    function openInv(mode) { state.inv.open = true; state.inv.mode = mode; }
+    function closeInv() { state.inv.open = false; }
+    function focusKeyState(key) {
+      const fp = state.focus;
+      if (!fp) return {};
+      if (key === "run") return { enabled: true };
+      if (key === "rollback") return { enabled: state.rollbackUnlocked && !!state.checkpoint };
+      if (key === "step") return fp.action === "step" ? { enabled: !fp.locked, primary: !fp.locked, locked: fp.locked } : {};
+      if (key === "patch") return fp.patchable && state.patchUnlocked ? { enabled: true, primary: true } : {};
+      return {};
+    }
+    // step_into 切图过场：绿色下潜，中点换图
+    function drawFileTransition() {
+      drawGame();
+      const W = state.W, H = state.H;
+      const dur = 0.9, k = clamp(state.ftT / dur, 0, 1);
+      const cover = k < 0.5 ? k / 0.5 : 1 - (k - 0.5) / 0.5;
+      ctx.save();
+      ctx.fillStyle = `rgba(2,8,5,${(cover * 0.96).toFixed(3)})`;
+      ctx.fillRect(0, 0, W, H);
+      ctx.translate(W / 2, H * 0.34);
+      const rings = 18;
+      for (let i = 0; i < rings; i++) {
+        const a = (i / rings) * Math.PI * 2 + state.ftT * 7;
+        const r = (0.12 + i / rings) * Math.max(W, H) * 0.5;
+        ctx.strokeStyle = i % 2 ? `rgba(0,255,102,${0.5 * cover})` : `rgba(0,185,199,${0.4 * cover})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * r * 0.1, Math.sin(a) * r * 0.1, r * 0.5, a, a + 1.5);
+        ctx.stroke();
+      }
+      ctx.restore();
+      if (cover > 0.25) txt(ctx, `step_into("${state.ftTo}")`, W / 2, H * 0.32, 14, C.green2, "center", "700");
+    }
+
+    // ---- 本地存档 ----
+    const SAVE_KEY = "stepIntoBugSave";
+    function loadProgress() {
+      try {
+        const s = JSON.parse(localStorage.getItem(SAVE_KEY) || "{}");
+        state.save = { endings: s.endings || {}, foundScanner: !!s.foundScanner, bestTechDebt: s.bestTechDebt, bestCpuHeat: s.bestCpuHeat };
+      } catch (e) { state.save = { endings: {} }; }
+    }
+    function saveProgress() {
+      if (!state.save) state.save = { endings: {} };
+      if (state.endingType) state.save.endings[state.endingType] = true;
+      if (state.endingType === "true") state.save.foundScanner = true;
+      if (state.save.bestTechDebt == null || state.techDebt < state.save.bestTechDebt) state.save.bestTechDebt = state.techDebt;
+      if (state.save.bestCpuHeat == null || state.cpuHeat < state.save.bestCpuHeat) state.save.bestCpuHeat = state.cpuHeat;
+      try { localStorage.setItem(SAVE_KEY, JSON.stringify(state.save)); } catch (e) {}
+    }
+
+    // ---- 结局 ----
+    function enterEnding(type) {
+      state.scene = "ending"; state.endingType = type;
+      state.inv.open = false; state.mode = "explore"; state.focus = null; state.held = null;
+      if (type === "meltdown") sfx.alarm();
+      else if (type === "true") sfx.shutdown();
+      else sfx.enter();
+      saveProgress();
+    }
+    function checkMeltdown() {
+      if (state.scene === "game" && state.cpuHeat >= HEAT_BOSS_THRESHOLD && !state.heatBossTriggered) {
+        state.heatBossTriggered = true;
+        enterHeatStory();
+        return;
+      }
+      if (state.cpuHeat >= 100 && state.scene === "hidden_boss") {
+        enterEnding("meltdown");
+        return;
+      }
+    }
+    function enterHeatStory() {
+      state.scene = "heat_story";
+      state.heatStoryT = 0;
+      state.heatStoryStep = 0;
+      state.inv.open = false;
+      state.mode = "explore";
+      state.focus = null;
+      state.held = null;
+      pushTrace("FORCED RESCUE: CPU overheat", C.red2);
+      addFx("强制抢救", C.red2);
+      sfx.alarm();
+    }
+    function drawHeatStory() {
+      const W = state.W, H = state.H;
+      const t = state.heatStoryT;
+      px(ctx, 0, 0, W, H, "#080204");
+      const ot = officeTop(H);
+      drawOffice(0, ot, W, H - ot);
+      ctx.fillStyle = `rgba(120,8,16,${(0.18 + 0.18 * Math.sin(state.t * 8)).toFixed(3)})`;
+      ctx.fillRect(0, 0, W, H);
+      for (let y = 0; y < H; y += 5) if (Math.random() < 0.08) px(ctx, 0, y, W, 2, "rgba(255,42,42,0.10)");
+      const cx = W / 2;
+      blockTitleText([{ s: "CPU 过热", fill: C.red }], cx, H * 0.13, 40, { rows: 26, maxW: W * 0.82, outline: "#1a0205" });
+      const cpuScale = Math.max(4, Math.min(7, W / 90));
+      drawSprite(A.cpuBoss, cx - 16 * cpuScale, H * 0.32, cpuScale);
+      const meterW = Math.min(W - 60, 320), mx = cx - meterW / 2, my = H * 0.53;
+      px(ctx, mx, my, meterW, 14, "#1a0506");
+      px(ctx, mx, my, meterW * clamp((state.cpuHeat - 35) / 65, 0, 1), 14, C.red);
+      px(ctx, mx + meterW * 0.82, my - 3, 2, 20, C.amber);
+      ctx.strokeStyle = C.red2; ctx.lineWidth = 1; ctx.strokeRect(mx + 0.5, my + 0.5, meterW - 1, 13);
+      txt(ctx, Math.round(state.cpuHeat) + "°C", cx, my + 20, 13, C.red2, "center", "700");
+      const boxW = Math.min(W - 36, 380), boxH = 118, bx = cx - boxW / 2, by = H * 0.64;
+      px(ctx, bx, by, boxW, boxH, "rgba(35,6,8,0.94)");
+      ctx.strokeStyle = C.red; ctx.lineWidth = 2; ctx.strokeRect(bx + 1, by + 1, boxW - 2, boxH - 2);
+      const lines = t < 2.0
+        ? ["DebugBot：不好，CPU 过热要烧了！", "不是入口触发，是系统压力爆表。"]
+        : ["DebugBot：趁着老板还没来，", "赶紧抢救啊！"];
+      for (let i = 0; i < lines.length; i++) txt(ctx, lines[i], bx + 18, by + 22 + i * 26, 15, C.cream, "left", "700");
+      const blink = (Math.sin(state.t * 5) + 1) / 2;
+      ctx.save(); ctx.globalAlpha = 0.45 + blink * 0.55;
+      txt(ctx, t >= 2.0 ? "▶ 点击进入抢救战" : "▶ 点击加速", cx, by + boxH - 28, 12, C.red2, "center", "700");
+      ctx.restore();
+    }
+    function drawEnding() {
+      const W = state.W, H = state.H, cx = W / 2;
+      const t = state.endingType, trueEnd = t === "true";
+      px(ctx, 0, 0, W, H, trueEnd ? "#04100a" : (t === "overtime" ? "#0d0a04" : "#0a0204"));
+      if (t === "meltdown") for (let i = 0; i < H; i += 4) if (Math.random() < 0.05) px(ctx, 0, i, W, 2, "rgba(255,42,42,0.12)");
+      if (t === "meltdown") {
+        blockTitleText([{ s: "CPU 过热", fill: C.red }], cx, H * 0.13, 46, { rows: 30, maxW: W * 0.82, outline: "#1a0205" });
+        const lines = ["CPU 过热，程序崩溃。", "这不是最终真相，", "只是压力先把你吞没了。", "报警被关掉太久，", "系统只能强制停机。"];
+        for (let i = 0; i < lines.length; i++) txt(ctx, lines[i], cx, H * 0.33 + i * 26, 15, C.cream, "center", "700");
+        endCode('raise RuntimeError("developer overheated")', C.red2, C.redDark, "#120305");
+      } else if (trueEnd) {
+        blockTitleText([{ s: "准点下班", fill: C.green2 }], cx, H * 0.12, 46, { rows: 30, maxW: W * 0.82, outline: "#03140c" });
+        const lines = ["你没有继续打补丁。", "你顺着调用链走进了隐藏文件。", "真正的 bug 不在报错处，", "它藏在一个看似无害的 scan() 里。", "当扫描停止制造问题，", "循环终于结束。你关灯，下班。"];
+        for (let i = 0; i < lines.length; i++) txt(ctx, lines[i], cx, H * 0.30 + i * 24, 14, C.cream, "center", "700");
+        endCode('print("Goodbye, Office!")', C.green2, C.greenDark, "#06140d");
+      } else if (t === "overtime") {
+        blockTitleText([{ s: "加班", fill: C.amber }], cx, H * 0.13, 46, { rows: 30, maxW: W * 0.82, outline: "#1a1402" });
+        const lines = ["你修完了最后一个 bug，", "至少看起来是这样。", "CPU 压力暂时降下来了，", "但火源还在制造新清单。", "老板推门进来：", "「既然你还在，顺手再加个需求吧。」"];
+        for (let i = 0; i < lines.length; i++) txt(ctx, lines[i], cx, H * 0.30 + i * 24, 14, C.cream, "center", "700");
+        endCode('# TODO: 再加一个需求…', C.amber, "#3a2a0a", "#14100a");
+      }
+      const rank = state.insight >= 120 && state.techDebt === 0 ? "S" : state.insight >= 90 ? "A" : state.insight >= 55 ? "B" : "C";
+      txt(ctx, `DEBUG RANK ${rank}  ·  IDEA ${state.insight}  ·  DEBT ${state.techDebt}`, cx, H * 0.735, 12, trueEnd ? C.green2 : C.amber, "center", "700");
+      const recap = endingRecap(t);
+      for (let i = 0; i < recap.length; i++) {
+        txt(ctx, fitLine(recap[i], W - 46, 11, "700"), cx, H * 0.765 + i * 16, 11, i === 0 ? (trueEnd ? C.green2 : C.amber) : C.cream, "center", "700");
+      }
+      const bw = Math.min(220, W * 0.6), bh = 48, bx = cx - bw / 2, by = H - Math.max(96, H * 0.13);
+      pixelButton(bx, by, bw, bh, "重新开始", C.green, "#06281a", () => { state.scene = "title"; });
+    }
+    function endingRecap(type) {
+      if (type === "true") return ["复盘：你学会了", "while 卡住先查条件", "scan 名字像只读，也可能有副作用"];
+      if (type === "overtime") return ["复盘：这次主要修了症状", "报警降温了，但根因还在制造 bug", "继续追 scan() 才能准点下班"];
+      return ["复盘：压力管理失败", "撞 bug、吞异常、错补丁都会升温", "先 rollback，再验证真实状态"];
+    }
+    function endCode(line, col, edge, fill) {
+      const W = state.W, cx = W / 2;
+      const cw = Math.min(W - 36, 340), cbx = cx - cw / 2, cby = state.H * 0.66;
+      px(ctx, cbx, cby, cw, 40, fill);
+      ctx.strokeStyle = edge; ctx.lineWidth = 1; ctx.strokeRect(cbx + 0.5, cby + 0.5, cw - 1, 39);
+      ctx.font = '700 13px "Microsoft YaHei","PingFang SC",monospace';
+      let s = line; while (ctx.measureText(s).width > cw - 24 && s.length > 4) s = s.slice(0, -1);
+      txt(ctx, s, cbx + 12, cby + 13, 13, col, "left", "700");
+    }
+
+    // ================= 隐藏走廊 scanner.py =================
+    function enterCorridor() {
+      state.scene = "hidden_corridor";
+      state.corridor = { t: 0, revealed: false };
+      state.activeFile = "scanner.py";
+      if (!state.openedFiles.includes("scanner.py")) state.openedFiles.push("scanner.py");
+      sfx.vortex();
+    }
+    function drawCorridor() {
+      const W = state.W, H = state.H;
+      const cd = state.corridor;
+      const red = Math.min(1, cd.t / 3);
+      // 上半：红色走廊 + 主角强制向前
+      const topH = Math.floor(H * 0.5);
+      px(ctx, 0, 0, W, topH, "#05100b");
+      // 透视走廊线，逐渐变红
+      ctx.strokeStyle = `rgba(${Math.round(20 + red * 200)},${Math.round(60 - red * 40)},${Math.round(40 - red * 30)},0.7)`;
+      ctx.lineWidth = 2;
+      const vx = W / 2, vy = topH * 0.34;
+      for (let i = 1; i <= 6; i++) {
+        const f = i / 6, y = vy + (topH - vy) * f * f;
+        ctx.beginPath(); ctx.moveTo(W / 2 - W * 0.5 * f, y); ctx.lineTo(W / 2 + W * 0.5 * f, y); ctx.stroke();
+      }
+      ctx.beginPath(); ctx.moveTo(vx, vy); ctx.lineTo(W * 0.02, topH); ctx.moveTo(vx, vy); ctx.lineTo(W * 0.98, topH); ctx.stroke();
+      // 红色 glitch
+      for (let i = 0; i < topH; i += 3) if (Math.random() < red * 0.25) px(ctx, 0, i, W, 2, `rgba(255,42,42,${0.1 + red * 0.15})`);
+      // 主角向前走（背影）
+      const walk = Math.floor(cd.t * 6) % 2;
+      drawSprite(A.player.up[walk], W / 2 - 16 * (topH / 240), topH * 0.55, topH / 240);
+      // 红光罩
+      ctx.fillStyle = `rgba(120,8,16,${red * 0.32})`; ctx.fillRect(0, 0, W, topH);
+
+      // 下半：scanner.py 代码自动滚动
+      const codeY = topH, codeH = H - topH;
+      px(ctx, 0, codeY, W, codeH, "#020705");
+      px(ctx, 8, codeY + 8, W - 16, codeH - 70, "#04100a");
+      ctx.save(); ctx.beginPath(); ctx.rect(8, codeY + 8, W - 16, codeH - 70); ctx.clip();
+      const code = CODE["scanner.py"]; const lineH = 18;
+      const keyLine = 16; // self.report_bug(bugs, 'ghost bug') —— 根因那行
+      const maxScroll = (keyLine - 1) * lineH - (codeH - 70) * 0.4;
+      const scroll = Math.min(maxScroll, cd.t * 60);
+      for (let i = 0; i < code.length; i++) {
+        const y = codeY + 16 + i * lineH - scroll;
+        const hot = (i + 1) === keyLine;
+        if (hot && cd.revealed) px(ctx, 12, y - 2, W - 24, lineH, "rgba(255,42,42,0.22)");
+        const col = hot && cd.revealed ? C.red2 : (hot ? C.green2 : "#0c8a45");
+        txt(ctx, code[i] || " ", 20, y, 12, col, "left", hot ? "700" : "400");
+      }
+      ctx.restore();
+
+      if (cd.revealed) {
+        const bw = Math.min(W - 24, 360), bx = (W - bw) / 2, by = H - 58, boxH = 62;
+        px(ctx, bx, by - boxH, bw, boxH, "rgba(40,4,8,0.95)");
+        ctx.strokeStyle = C.red; ctx.lineWidth = 1.5; ctx.strokeRect(bx + 1, by - boxH + 1, bw - 2, boxH - 2);
+        const ln = wrapLines("找到了。Ghost Scanner 不是敌人。config.py 打开 AUTO_APPEND 后，大家以为 scan 只是检查，它却每次都 report_bug。", bw - 20, 12);
+        for (let i = 0; i < ln.length && i < 4; i++) txt(ctx, ln[i], bx + 12, by - boxH + 8 + i * 14, 12, C.red2, "left", "700");
+        const blink = (Math.sin(state.t * 4) + 1) / 2;
+        ctx.save(); ctx.globalAlpha = 0.45 + blink * 0.55;
+        txt(ctx, "▶ 点击继续", W / 2, H - 22, 12, C.red2, "center", "700"); ctx.restore();
+      } else {
+        txt(ctx, "（点击加速）", W / 2, H - 22, 11, "#7a2a2a", "center");
+      }
+    }
+    function updateCorridor(dt) {
+      state.corridor.t += dt;
+      if (state.corridor.t >= 3 && !state.corridor.revealed) { state.corridor.revealed = true; sfx.bot(); }
+    }
+
+    // ================= Ghost Scanner Boss =================
+    const BOSS_DEFS = {
+      scanner: { sprite: "boss", words: ["AUTO_APPEND", "report_bug", "append", "phantom_bug"],
+        banner: "Ghost Scanner · patch() 用 # scan should be read-only 终结它", color: "255,42,42", win: "patch", ending: "true" },
+      cpu: { sprite: "cpuBoss", words: ["RuntimeError", "Exception", "pass"],
+        banner: "CPU Overheat · 抢救 15 秒，别烧到 100", color: "255,107,107", win: "survive", winTime: 15, ending: "overtime" }
+    };
+    function enterBoss(type, reason) {
+      state.scene = "hidden_boss";
+      state.boss = { type: type || "scanner", t: 0, bullets: [], spawnT: 0, won: false, flash: 0, early: reason === "heat" };
+      state.arena = { x: 0.5, y: 0.8 };
+      state.held = null;
+      sfx.boss();
+    }
+    function updateBoss(dt) {
+      const b = state.boss;
+      const def = BOSS_DEFS[b.type];
+      b.t += dt;
+      if (b.flash > 0) b.flash -= dt;
+      const sp = 0.9;
+      if (state.held === "left") state.arena.x -= sp * dt;
+      else if (state.held === "right") state.arena.x += sp * dt;
+      else if (state.held === "up") state.arena.y -= sp * dt;
+      else if (state.held === "down") state.arena.y += sp * dt;
+      state.arena.x = clamp(state.arena.x, 0.06, 0.94);
+      state.arena.y = clamp(state.arena.y, 0.3, 0.94);
+      b.spawnT -= dt;
+      if (b.spawnT <= 0) {
+        b.spawnT = Math.max(0.3, 0.8 - state.techDebt * 0.05);
+        const bx = 0.2 + Math.random() * 0.6;
+        const ang = Math.atan2(state.arena.y - 0.12, state.arena.x - bx);
+        const spd = 0.34 + Math.random() * 0.1;
+        b.bullets.push({ x: bx, y: 0.12, vx: Math.cos(ang) * spd * 0.5, vy: Math.sin(ang) * spd, w: def.words[(Math.random() * def.words.length) | 0] });
+      }
+      for (let i = b.bullets.length - 1; i >= 0; i--) {
+        const bl = b.bullets[i];
+        bl.x += bl.vx * dt; bl.y += bl.vy * dt;
+        if (bl.y > 1.02 || bl.x < -0.05 || bl.x > 1.05) { b.bullets.splice(i, 1); continue; }
+        if (Math.abs(bl.x - state.arena.x) < 0.06 && Math.abs(bl.y - state.arena.y) < 0.06) {
+          b.bullets.splice(i, 1);
+          b.flash = 0.25; addFx("被击中", C.red2);
+          (state.cpuHeat >= 85 ? sfx.alarm : sfx.blocked)();
+          raiseHeat(6, "弹幕");
+        }
+      }
+      if (def.win === "survive" && b.t >= def.winTime && !b.won) { b.won = true; enterEnding(def.ending); }
+    }
+    function drawBoss() {
+      const W = state.W, H = state.H;
+      const def = BOSS_DEFS[state.boss.type];
+      const L = layout();
+      px(ctx, 0, 0, W, H, "#080204");
+      const r = L.map;
+      // 竞技场
+      px(ctx, r.x, r.y, r.w, r.h, "#0a0306");
+      for (let i = 0; i < r.h; i += 3) if (Math.random() < 0.06) px(ctx, r.x, r.y + i, r.w, 2, `rgba(${def.color},0.08)`);
+      if (state.boss.flash > 0) { ctx.fillStyle = `rgba(${def.color},${state.boss.flash})`; ctx.fillRect(r.x, r.y, r.w, r.h); }
+      // Boss
+      const spr = A[def.sprite];
+      const bossScale = Math.max(3, r.w / 90);
+      const bw = spr.width * bossScale;
+      drawSprite(spr, r.x + r.w / 2 - bw / 2, r.y + r.h * 0.05 + Math.sin(state.t * 2) * 4, bossScale);
+      // 弹幕
+      ctx.font = '700 12px "Microsoft YaHei",monospace'; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      for (const bl of state.boss.bullets) {
+        const px0 = r.x + bl.x * r.w, py0 = r.y + bl.y * r.h;
+        ctx.fillStyle = `rgba(${def.color},0.18)`; ctx.fillRect(px0 - 30, py0 - 9, 60, 18);
+        ctx.fillStyle = C.red2; ctx.fillText(bl.w, px0, py0);
+      }
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      // 玩家
+      const pxp = r.x + state.arena.x * r.w, pyp = r.y + state.arena.y * r.h;
+      const sc = bossScale * 0.8;
+      drawSprite(A.player.up[Math.floor(state.t * 6) % 2], pxp - 8 * sc, pyp - 10 * sc, sc);
+      // 边框 + 顶部提示
+      ctx.strokeStyle = C.red; ctx.lineWidth = 2; ctx.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+      ctx.font = '700 11px "Microsoft YaHei","PingFang SC",monospace';
+      const banner = state.boss.early ? "CPU Overheat · 强制抢救战" : def.banner;
+      const bnW = Math.min(r.w - 12, ctx.measureText(banner).width + 22);
+      px(ctx, r.x + (r.w - bnW) / 2, r.y + 8, bnW, 22, "rgba(40,4,8,0.9)");
+      txt(ctx, fitLine(banner, bnW - 12, 11, "700"), r.x + r.w / 2, r.y + 13, 11, C.red2, "center", "700");
+      // CPU Boss：生存进度条
+      if (def.win === "survive") {
+        const pw = r.w * 0.6, pxb = r.x + (r.w - pw) / 2, pyb = r.y + 36;
+        const k = Math.min(1, state.boss.t / def.winTime);
+        px(ctx, pxb, pyb, pw, 8, "#1a0604");
+        px(ctx, pxb, pyb, pw * k, 8, k > 0.7 ? C.green2 : C.amber);
+        txt(ctx, "撑住 " + Math.max(0, Math.ceil(def.winTime - state.boss.t)) + "s", r.x + r.w / 2, pyb + 12, 11, C.amber, "center", "700");
+      }
+      drawStatus(L.status);
+      drawTabs(L.tabs);
+      drawCode(L.code);
+      drawBossControls(L.controls, def);
+      drawFx(L.map);
+      if (state.inv.open) drawInventory();
+    }
+    function drawBossControls(rect, def) {
+      px(ctx, rect.x, rect.y, rect.w, rect.h, C.bg);
+      px(ctx, rect.x, rect.y, rect.w, 2, "#1a0205");
+      const s = Math.min(46, Math.max(36, rect.h * 0.29)), gap = 6;
+      const bx = 22, by = rect.y + (rect.h - s * 3 - gap * 2) / 2;
+      padBtn(bx + s + gap, by, s, "▲", "up");
+      padBtn(bx, by + s + gap, s, "◀", "left");
+      padBtn(bx + s + gap, by + s + gap, s, "▼", "down");
+      padBtn(bx + (s + gap) * 2, by + s + gap, s, "▶", "right");
+      const aw = Math.min(160, rect.w * 0.42), ah = 46;
+      const ax = rect.w - aw - 18, ay = rect.y + (rect.h - ah) / 2;
+      if (def.win === "patch") {
+        const pulse = 0.4 + 0.5 * Math.sin(state.t * 6);
+        btnBox(ax, ay, aw, ah, C.green, "#0a3322");
+        ctx.strokeStyle = `rgba(57,255,136,${pulse.toFixed(2)})`; ctx.lineWidth = 2; ctx.strokeRect(ax + 2, ay + 2, aw - 4, ah - 4);
+        txt(ctx, "patch()", ax + aw / 2, ay + ah / 2 - 8, 15, C.green2, "center", "700");
+        state.buttons.push({ x: ax, y: ay, w: aw, h: ah, tap: () => bossOpenPatch() });
+      } else {
+        btnBox(ax, ay, aw, ah, C.amber, "#241c06");
+        txt(ctx, "← → ↑ ↓ 躲弹幕", ax + aw / 2, ay + ah / 2 - 8, 12, C.amber, "center", "700");
+      }
+    }
+    function bossOpenPatch() {
+      if (state.inventory.length === 0) { sfx.blocked(); showBot("需要碎片 # scan should be read-only 才能终结它。", 4); return; }
+      openInv("pick"); state.inv.boss = true;
+    }
+    function bossApplyPatch(frag) {
+      const ok = frag === "# scan should be read-only" || frag === "return bugs";
+      const i = state.inventory.indexOf(frag);
+      if (i >= 0) state.inventory.splice(i, 1);
+      state.shards = Math.max(0, state.shards - 1);
+      closeInv(); state.inv.boss = false;
+      if (ok) {
+        state.codeOverrides["scanner.py"] = { 14: "        # scan should be read-only", 15: "        return bugs" };
+        sfx.enter();
+        enterEnding("true");
+      } else {
+        raiseHeat(8, "碎片不对"); sfx.blocked();
+        showBot("不是这个。Ghost Scanner 要的是让 scan 变只读。", 4);
+      }
+    }
+
+    // ================= 游戏主场景 =================
+    function layout() {
+      const W = state.W, H = state.H;
+      const statusH = 30, tabsH = 34;
+      const controlsH = Math.max(132, Math.min(168, H * 0.21));
+      const codeH = Math.max(118, Math.min(176, H * 0.21));
+      const mapH = H - statusH - tabsH - codeH - controlsH;
+      return {
+        map: { x: 0, y: 0, w: W, h: mapH },
+        status: { x: 0, y: mapH, w: W, h: statusH },
+        tabs: { x: 0, y: mapH + statusH, w: W, h: tabsH },
+        code: { x: 0, y: mapH + statusH + tabsH, w: W, h: codeH },
+        controls: { x: 0, y: H - controlsH, w: W, h: controlsH }
+      };
+    }
+
+    function drawGame() {
+      const L = layout();
+      px(ctx, 0, 0, state.W, state.H, C.bg);
+      drawMap(L.map);
+      drawFx(L.map);
+      drawStatus(L.status);
+      drawTabs(L.tabs);
+      drawCode(L.code);
+      drawControls(L.controls);
+      drawBotDialog(L.map);
+      drawCallStack(L.map);
+      if (state.inv.open) drawInventory();
+      if (state.quiz.open) drawQuiz();
+      if (state.compare) drawCompare();
+      if (state.help.open) drawHelp();
+      if (state.peek.open) drawPeek();
+      if (state.npcPick.open) drawNpcPick();
+      if (state.sysMsg) drawSysPrompt();
+    }
+    function drawSysPrompt() {
+      // system_prompt：屏幕中央淡入的提示条
+      const W = state.W, H = state.H;
+      const lines = wrapLines(state.sysMsg, Math.min(W - 88, 300), 15);
+      const bw = Math.min(W - 48, 340), bh = 26 + lines.length * 20, bx = (W - bw) / 2, by = H * 0.30;
+      ctx.save(); ctx.globalAlpha = 0.6 + 0.4 * Math.min(1, (state.t % 2));
+      px(ctx, bx, by, bw, bh, "rgba(2,12,9,0.92)");
+      ctx.strokeStyle = C.cyan; ctx.lineWidth = 1.5; ctx.strokeRect(bx + 1, by + 1, bw - 2, bh - 2);
+      ctx.globalAlpha = 1;
+      for (let i = 0; i < lines.length; i++) txt(ctx, lines[i], W / 2, by + 13 + i * 20, 15, C.cyan, "center", "700");
+      txt(ctx, "▸ 点击继续", W / 2, by + bh - 2, 9, "rgba(0,185,199,0.7)", "center", "700");
+      ctx.restore();
+    }
+    function drawNpcPick() {
+      const W = state.W, H = state.H;
+      px(ctx, 0, 0, W, H, "rgba(1,6,4,0.86)");
+      state.buttons.push({ x: 0, y: 0, w: W, h: H, tap: () => { state.npcPick.open = false; } });
+      const pw = Math.min(W - 36, 360), ph = 168, bx = (W - pw) / 2, by = (H - ph) / 2;
+      px(ctx, bx, by, pw, ph, "#06140d");
+      ctx.strokeStyle = C.cyan; ctx.lineWidth = 2; ctx.strokeRect(bx + 1, by + 1, pw - 2, ph - 2);
+      txt(ctx, "insert(下标, 'ME')", bx + 16, by + 12, 14, C.cyan, "left", "700");
+      txt(ctx, "把自己插到哪个下标？下标 0 = 门口那格（墙—人—墙）", bx + 16, by + 32, 11, C.cream, "left", "700");
+      const n = state.npc, max = n ? n.list.length : 7;
+      const cols = max + 1, bw = (pw - 32 - (cols - 1) * 5) / cols;
+      for (let i = 0; i <= max; i++) {
+        const cx = bx + 16 + i * (bw + 5), cy = by + 64, win = i === 0;
+        btnBox(cx, cy, bw, 36, win ? C.green : C.cyanDim, win ? "#06281a" : "#07120d");
+        txt(ctx, String(i), cx + bw / 2, cy + 12, 15, win ? C.green2 : "#7fffc4", "center", "700");
+        state.buttons.push({ x: cx, y: cy, w: bw, h: 36, tap: () => npcInsert(i) });
+      }
+      const cw = 72, ch = 30, ccx = bx + pw - cw - 14, ccy = by + ph - ch - 12;
+      btnBox(ccx, ccy, cw, ch, C.cyanDim, "#07120d");
+      txt(ctx, "取消", ccx + cw / 2, ccy + 8, 13, "#7fffc4", "center", "700");
+      state.buttons.push({ x: ccx, y: ccy, w: cw, h: ch, tap: () => { state.npcPick.open = false; } });
+    }
+    function drawPeek() {
+      // 纵览 = 看真实代码：定位到你现在房间对应的那段，往下渐隐
+      const W = state.W, H = state.H;
+      px(ctx, 0, 0, W, H, "rgba(1,6,4,0.88)");
+      state.buttons.push({ x: 0, y: 0, w: W, h: H, tap: () => { state.peek.open = false; } });
+      const pw = Math.min(W - 24, 392), ph = Math.min(H - 96, 470);
+      const bx = (W - pw) / 2, by = (H - ph) / 2;
+      px(ctx, bx, by, pw, ph, "#06140d");
+      ctx.strokeStyle = C.cyan; ctx.lineWidth = 2; ctx.strokeRect(bx + 1, by + 1, pw - 2, ph - 2);
+      const f = FILES[state.activeFile];
+      const code = CODE[state.activeFile] || [];
+      const cur = explorerHighlight();             // 你现在站的房间对应的代码行
+      // 往上找最近的 def/class，作为当前段落起点 + 段名
+      let secStart = 0, secName = "";
+      for (let i = Math.min(cur - 1, code.length - 1); i >= 0; i--) {
+        const tt = (code[i] || "").trim();
+        if (tt.startsWith("def ") || tt.startsWith("class ")) {
+          secStart = i; secName = tt.replace(/[:(].*$/, "").replace(/^def\s+|^class\s+/, ""); break;
+        }
+      }
+      txt(ctx, "纵览 · " + f.title, bx + 16, by + 12, 14, C.cyan, "left", "700");
+      txt(ctx, secName ? "你在这段：" + secName : "你在：模块顶层", bx + 16, by + 31, 11, C.green2, "left", "700");
+      const codeTop = by + 52, botPad = 48, lineH = 18;
+      const areaH = ph - 52 - botPad;
+      const rows = Math.floor(areaH / lineH);
+      let startIdx = Math.max(0, secStart - 1);
+      startIdx = Math.min(startIdx, Math.max(0, code.length - rows));
+      ctx.save(); ctx.beginPath(); ctx.rect(bx + 8, codeTop - 4, pw - 16, areaH + 8); ctx.clip();
+      for (let r = 0; r < rows && startIdx + r < code.length; r++) {
+        const idx = startIdx + r, ln = idx + 1, yy = codeTop + r * lineH;
+        const raw = codeLineOf(state.activeFile, idx) || " ";
+        const tt = raw.trim();
+        const fromBottom = rows - 1 - r;
+        ctx.globalAlpha = fromBottom < 4 ? Math.max(0.12, fromBottom / 4) : 1;   // 底部几行渐隐
+        const isCur = ln === cur;
+        const isDef = tt.startsWith("def ") || tt.startsWith("class ");
+        if (isCur) px(ctx, bx + 10, yy - 2, pw - 20, lineH, "rgba(0,255,102,0.16)");
+        txt(ctx, String(ln).padStart(2, "0"), bx + 14, yy, 11, isCur ? C.green2 : "#0a6a3c", "left", "700");
+        const col = tt.startsWith("#") ? "#9fd0b0" : isCur ? C.green2 : isDef ? C.cyan : "#46d486";
+        txt(ctx, fitLine(raw, pw - 56, 12), bx + 42, yy, 12, col, "left");
+      }
+      ctx.globalAlpha = 1; ctx.restore();
+      const cw = 72, ch = 30, cx = bx + pw - cw - 14, cy = by + ph - ch - 10;
+      btnBox(cx, cy, cw, ch, C.cyanDim, "#07120d");
+      txt(ctx, "关闭", cx + cw / 2, cy + 8, 13, "#7fffc4", "center", "700");
+      state.buttons.push({ x: cx, y: cy, w: cw, h: ch, tap: () => { state.peek.open = false; } });
+    }
+    function drawFx(rect) {
+      for (let i = 0; i < state.fx.length; i++) {
+        const f = state.fx[i];
+        const a = Math.max(0, 1 - f.t / 1.3);
+        const yy = rect.y + rect.h * 0.34 - f.t * 26 - i * 22;
+        ctx.save(); ctx.globalAlpha = a;
+        txt(ctx, f.text, rect.x + rect.w / 2, yy, 15, f.color, "center", "900");
+        ctx.restore();
+      }
+    }
+    function drawCallStack(rect) {
+      if (!state.callStack || !state.callStack.length || state.inv.open || state.quiz.open) return;
+      const w = Math.min(190, Math.max(138, rect.w * 0.42));
+      const lineH = 15;
+      const h = 24 + state.callStack.length * lineH;
+      const x = rect.x + rect.w - w - 10;
+      const y = rect.y + 58;
+      px(ctx, x, y, w, h, "rgba(2,10,7,0.82)");
+      ctx.strokeStyle = "rgba(0,185,199,0.6)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      txt(ctx, "CALL STACK", x + 10, y + 7, 10, C.cyan, "left", "700");
+      for (let i = 0; i < state.callStack.length; i++) {
+        const prefix = i === 0 ? "" : "↳ ";
+        const label = fitLine(prefix + state.callStack[i], w - 20 - i * 8, 10, "700");
+        txt(ctx, label, x + 10 + i * 8, y + 22 + i * lineH, 10, i === state.callStack.length - 1 ? C.green2 : C.greenDim, "left", "700");
+      }
+    }
+    function drawQuiz() {
+      const W = state.W, H = state.H;
+      const fp = state.quiz.fp, q = fp && fp.quiz;
+      if (!q) return;
+      px(ctx, 0, 0, W, H, "rgba(1,5,3,0.78)");
+      state.buttons.push({ x: 0, y: 0, w: W, h: H, tap: () => {} });
+      const pw = Math.min(W - 34, 380);
+      const ph = Math.min(H - 96, state.quiz.answered ? 350 : 300);
+      const bx = (W - pw) / 2;
+      const by = Math.max(34, (H - ph) / 2);
+      px(ctx, bx, by, pw, ph, "#06140d");
+      ctx.strokeStyle = C.green;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bx + 1, by + 1, pw - 2, ph - 2);
+      txt(ctx, "先预测，再执行", bx + 16, by + 15, 14, C.green2, "left", "700");
+      const qs = wrapLines(q.q, pw - 32, 14);
+      for (let i = 0; i < qs.length; i++) txt(ctx, qs[i], bx + 16, by + 44 + i * 19, 14, C.cream, "left", "700");
+      let y = by + 88 + Math.max(0, qs.length - 1) * 18;
+      for (let i = 0; i < q.choices.length; i++) {
+        const selected = state.quiz.selected === i;
+        const answered = state.quiz.answered;
+        const good = answered && i === q.answer;
+        const bad = answered && selected && i !== q.answer;
+        const line = good ? C.green : bad ? C.red : selected ? C.amber : C.greenDark;
+        const fill = good ? "#0b2c1c" : bad ? "#2a0709" : selected ? "#241c06" : "#04100a";
+        btnBox(bx + 16, y, pw - 32, 34, line, fill);
+        const tag = String.fromCharCode(65 + i) + ". ";
+        txt(ctx, fitLine(tag + q.choices[i], pw - 48, 12, "700"), bx + 28, y + 10, 12, good ? C.green2 : bad ? C.red2 : C.cream, "left", "700");
+        if (!answered) {
+          const idx = i;
+          state.buttons.push({ x: bx + 16, y, w: pw - 32, h: 34, tap: () => answerQuiz(idx) });
+        }
+        y += 42;
+      }
+      if (state.quiz.answered) {
+        const right = state.quiz.selected === q.answer;
+        const label = right ? "预测正确" : "预测修正";
+        txt(ctx, label, bx + 16, y + 4, 12, right ? C.green2 : C.amber, "left", "700");
+        const reveal = wrapLines(q.reveal, pw - 32, 12);
+        for (let i = 0; i < reveal.length && i < 3; i++) txt(ctx, reveal[i], bx + 16, y + 24 + i * 17, 12, C.cream, "left", "700");
+        pixelButton(bx + pw - 128, by + ph - 48, 108, 34, "继续调试", C.green, "#06281a", () => closeQuiz());
+      } else {
+        txt(ctx, "不是考试，先押一个判断，再用代码验证。", bx + 16, by + ph - 34, 11, C.greenDim, "left", "700");
+      }
+    }
+    function drawCompare() {
+      const W = state.W, H = state.H, c = state.compare;
+      px(ctx, 0, 0, W, H, "rgba(1,5,3,0.76)");
+      state.buttons.push({ x: 0, y: 0, w: W, h: H, tap: () => {} });
+      const pw = Math.min(W - 32, 390), ph = Math.min(H - 90, 330);
+      const bx = (W - pw) / 2, by = Math.max(38, (H - ph) / 2);
+      px(ctx, bx, by, pw, ph, "#06140d");
+      ctx.strokeStyle = C.cyan;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bx + 1, by + 1, pw - 2, ph - 2);
+      txt(ctx, c.title || "补丁前后对照", bx + 16, by + 14, 14, C.cyan, "left", "700");
+      const colW = (pw - 42) / 2;
+      const top = by + 52;
+      drawCompareColumn(bx + 16, top, colW, "修复前", c.before || [], C.red2, "#170507");
+      drawCompareColumn(bx + 26 + colW, top, colW, "修复后", c.after || [], C.green2, "#04180e");
+      pixelButton(bx + pw - 126, by + ph - 48, 106, 34, "我懂了", C.green, "#06281a", () => { state.compare = null; });
+    }
+    function drawCompareColumn(x, y, w, title, lines, color, fill) {
+      px(ctx, x, y, w, 160, fill);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, 159);
+      txt(ctx, title, x + 10, y + 10, 12, color, "left", "700");
+      let yy = y + 38;
+      for (const line of lines) {
+        const wrapped = wrapLines(line, w - 20, 11);
+        for (const part of wrapped.slice(0, 2)) {
+          txt(ctx, part, x + 10, yy, 11, C.cream, "left", "700");
+          yy += 16;
+        }
+        yy += 5;
+      }
+    }
+    function drawHelp() {
+      const W = state.W, H = state.H;
+      px(ctx, 0, 0, W, H, "rgba(1,5,3,0.72)");
+      state.buttons.push({ x: 0, y: 0, w: W, h: H, tap: () => { state.help.open = false; } });
+      const pw = Math.min(W - 36, 340), ph = 250;
+      const bx = (W - pw) / 2, by = Math.max(56, (H - ph) / 2);
+      px(ctx, bx, by, pw, ph, "#06140d");
+      ctx.strokeStyle = C.greenDim;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bx + 1, by + 1, pw - 2, ph - 2);
+      txt(ctx, "DebugBot 提示", bx + 16, by + 16, 14, C.green2, "left", "700");
+      const lines = wrapLines("你可以保留探索感，也可以让我直接把路线画出来。", pw - 32, 12);
+      for (let i = 0; i < lines.length; i++) txt(ctx, lines[i], bx + 16, by + 46 + i * 17, 12, C.cream, "left", "700");
+      helpChoice(bx + 16, by + 92, pw - 32, "只给方向", "auto", "闲置后给一点路线提示");
+      helpChoice(bx + 16, by + 134, pw - 32, "直接画路线", "route", "持续显示下一目标路线");
+      helpChoice(bx + 16, by + 176, pw - 32, "不用提示", "off", "关闭路线，只保留文字目标");
+    }
+    function helpChoice(x, y, w, label, mode, desc) {
+      const active = state.guideMode === mode;
+      btnBox(x, y, w, 34, active ? C.green : C.greenDark, active ? "#0b2c1c" : "#04100a");
+      txt(ctx, label, x + 12, y + 6, 12, active ? C.green2 : C.cream, "left", "700");
+      txt(ctx, fitLine(desc, w - 112, 10, "700"), x + 104, y + 8, 10, C.greenDim, "left", "700");
+      state.buttons.push({ x, y, w, h: 34, tap: () => {
+        state.guideMode = mode;
+        state.help.open = false;
+        showBot(mode === "off" ? "好，我先不画路线。你随时可以再点提示。" : mode === "route" ? "路线已打开。发光点是下一步，不是唯一解。" : "我会在你停住时给方向。", 4);
+      } });
+    }
+    function drawInventory() {
+      const W = state.W, H = state.H;
+      px(ctx, 0, 0, W, H, "rgba(2,6,4,0.82)");
+      state.buttons.push({ x: 0, y: 0, w: W, h: H, tap: () => closeInv() });
+      const pw = Math.min(W - 36, 340), ph = Math.min(H - 150, 330);
+      const bx = (W - pw) / 2, by = (H - ph) / 2;
+      px(ctx, bx, by, pw, ph, "#06140d");
+      ctx.strokeStyle = C.green; ctx.lineWidth = 2; ctx.strokeRect(bx + 1, by + 1, pw - 2, ph - 2);
+      const title = state.inv.mode === "pick" ? "选择碎片，贴到当前代码行" : "碎片背包  " + state.inventory.length + "/7";
+      txt(ctx, title, bx + 16, by + 14, 14, C.green2, "left", "700");
+      let yy = by + 46;
+      if (state.inventory.length === 0) {
+        txt(ctx, "（空）去地图上捡发光的 </> 碎片", bx + 16, yy, 12, C.greenDim, "left");
+      } else {
+        for (let i = 0; i < state.inventory.length; i++) {
+          const frag = state.inventory[i];
+          const rh = 34, rx = bx + 14, ry = yy + i * (rh + 8), rw = pw - 28;
+          px(ctx, rx, ry, rw, rh, "#08231a");
+          ctx.strokeStyle = state.inv.mode === "pick" ? C.green : C.greenDark; ctx.lineWidth = 1;
+          ctx.strokeRect(rx + 0.5, ry + 0.5, rw - 1, rh - 1);
+          txt(ctx, frag, rx + 12, ry + 9, 13, C.green2, "left", "700");
+          if (state.inv.mode === "pick") {
+            const fr = frag;
+            txt(ctx, "贴上 ▸", rx + rw - 56, ry + 10, 12, C.green, "left", "700");
+            state.buttons.push({ x: rx, y: ry, w: rw, h: rh, tap: () => (state.inv.boss ? bossApplyPatch(fr) : applyPatch(fr)) });
+          }
+        }
+      }
+      const cw = 72, ch = 30, cx = bx + pw - cw - 14, cy = by + ph - ch - 12;
+      btnBox(cx, cy, cw, ch, C.cyanDim, "#07120d");
+      txt(ctx, "关闭", cx + cw / 2, cy + 8, 13, "#7fffc4", "center", "700");
+      state.buttons.push({ x: cx, y: cy, w: cw, h: ch, tap: () => closeInv() });
+    }
+
+    function drawMap(rect) {
+      state.mapRect = rect;
+      const tile = Math.max(26, Math.min(40, Math.floor(rect.w / 11)));
+      state.tile = tile;
+      const m = state.map;
+      const worldPxW = m.w * tile, worldPxH = m.h * tile;
+      const p = state.player;
+      // 相机跟随：纵向让角色落在“干净视窗”中央——避开顶部(目标/概念/调用栈)和底部(DebugBot)的浮层
+      const topInset = 100, botInset = 80;
+      const bandCenter = topInset + Math.max(0, rect.h - topInset - botInset) / 2;
+      let camX = p.fx * tile + tile / 2 - rect.w / 2;
+      let camY = p.fy * tile + tile / 2 - bandCenter;
+      camX = worldPxW <= rect.w ? (worldPxW - rect.w) / 2 : clamp(camX, 0, worldPxW - rect.w);
+      // 允许相机越过地图上下边界：多出来的部分正好被上下浮层盖住，角色(和身边的门)因此始终可见，不会顶到墙就不动
+      camY = clamp(camY, -topInset, worldPxH - rect.h + botInset);
+      state.cam.x = camX; state.cam.y = camY;
+
+      ctx.save();
+      ctx.beginPath(); ctx.rect(rect.x, rect.y, rect.w, rect.h); ctx.clip();
+      px(ctx, rect.x, rect.y, rect.w, rect.h, "#030806");
+
+      const x0 = Math.floor(camX / tile), x1 = Math.ceil((camX + rect.w) / tile);
+      const y0 = Math.floor(camY / tile), y1 = Math.ceil((camY + rect.h) / tile);
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          if (y < 0 || y >= m.h || x < 0 || x >= m.w) continue;
+          const sx = rect.x + x * tile - camX, sy = rect.y + y * tile - camY;
+          const ch = m.grid[y][x];
+          let img;
+          if (ch === "#") img = A.wall;
+          else if (ch === ",") img = A.grass;
+          else if (ch === "D") img = A.floor[0];
+          else img = A.floor[(x * 7 + y * 3) % 3];
+          ctx.drawImage(img, sx, sy, tile, tile);
+        }
+      }
+
+      // 物件层
+      drawGuideRoute(rect, tile, camX, camY);
+      drawFileGimmick(rect, tile, camX, camY);
+      drawMapDecor(rect, tile, camX, camY);
+      drawBugs(rect, tile, camX, camY);
+      drawBot(rect, tile, camX, camY);
+      drawPlayer(rect, tile, camX, camY);
+
+      // CRT 扫描线 + 暗角
+      if (scanPattern) { ctx.fillStyle = scanPattern; ctx.fillRect(rect.x, rect.y, rect.w, rect.h); }
+      const vg = ctx.createRadialGradient(rect.w / 2, rect.y + rect.h / 2, rect.h * 0.3, rect.w / 2, rect.y + rect.h / 2, rect.h * 0.75);
+      vg.addColorStop(0, "rgba(0,0,0,0)"); vg.addColorStop(1, "rgba(0,0,0,0.55)");
+      ctx.fillStyle = vg; ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+      // 收束态：聚光灯压暗四周 + 点位脉冲环
+      if (state.mode === "focus" && state.focus) {
+        const fcx = rect.x + (state.focus.x + 0.5) * tile - camX;
+        const fcy = rect.y + (state.focus.y + 0.5) * tile - camY;
+        const sg = ctx.createRadialGradient(fcx, fcy, tile * 0.5, fcx, fcy, tile * 3.4);
+        sg.addColorStop(0, "rgba(0,0,0,0)"); sg.addColorStop(1, "rgba(1,5,3,0.9)");
+        ctx.fillStyle = sg; ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+        ctx.strokeStyle = `rgba(57,255,136,${(0.5 + 0.4 * Math.sin(state.t * 5)).toFixed(2)})`;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rect.x + state.focus.x * tile - camX + 2, rect.y + state.focus.y * tile - camY + 2, tile - 4, tile - 4);
+      }
+      ctx.restore();
+
+      // 边框
+      ctx.strokeStyle = C.cyanDim; ctx.lineWidth = 2;
+      ctx.strokeRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2);
+
+      // 收束提示条（按点位可用动作动态显示）
+      if (state.mode === "focus" && state.focus) {
+        const fp = state.focus;
+        const canStep = fp.action === "step" && !fp.locked && (!fp.hiddenGate || scannerGateOpen());
+        let label;
+        if (fp.hiddenGate && !scannerGateOpen()) label = "● 收束 · 隐藏入口需要证据锁";
+        else if (canStep && fp.patchable) label = "● 收束 · step_into() 深入 / patch() 补当前行";
+        else if (canStep) label = "● 收束 · step_into() 进入调用内部";
+        else if (fp.patchable && fp.locked) label = "● 收束 · 调用链未解锁，可先 patch() 当前行";
+        else if (fp.patchable) label = "● 收束 · 可 patch() 当前行";
+        else label = "● 收束 · " + fp.label;
+        ctx.font = '700 12px "Microsoft YaHei","PingFang SC",monospace';
+        label = fitLine(label, rect.w - 30, 12, "700");
+        const bw0 = Math.min(rect.w - 16, ctx.measureText(label).width + 22);
+        const bx0 = rect.x + (rect.w - bw0) / 2, by0 = rect.y + 8;
+        px(ctx, bx0, by0, bw0, 22, "rgba(2,14,9,0.92)");
+        ctx.strokeStyle = C.green; ctx.lineWidth = 1; ctx.strokeRect(bx0 + 0.5, by0 + 0.5, bw0 - 1, 21);
+        txt(ctx, label, rect.x + rect.w / 2, by0 + 5, 12, C.green2, "center", "700");
+      } else if (state.mode === "explore" && !state.inv.open && FILES[state.activeFile].goal) {
+        // 探索目标条（新手引导）
+        const g = fitLine(FILES[state.activeFile].goal, rect.w - 42, 12, "700");
+        ctx.font = '700 12px "Microsoft YaHei","PingFang SC",monospace';
+        const gw = Math.min(rect.w - 16, ctx.measureText(g).width + 24);
+        const gx0 = rect.x + (rect.w - gw) / 2, gy0 = rect.y + 8;
+        px(ctx, gx0, gy0, gw, 22, "rgba(2,12,16,0.86)");
+        ctx.strokeStyle = C.cyanDim; ctx.lineWidth = 1; ctx.strokeRect(gx0 + 0.5, gy0 + 0.5, gw - 1, 21);
+        txt(ctx, g, rect.x + rect.w / 2, gy0 + 5, 12, "#7fffc4", "center", "700");
+      }
+      const concept = state.mode === "focus" && state.focus && state.focus.plain
+        ? "人话：" + state.focus.plain
+        : (FILES[state.activeFile].lesson ? "概念：" + FILES[state.activeFile].lesson : "");
+      if (concept && !state.inv.open) {
+        const line = fitLine(concept, rect.w - 44, 11, "700");
+        ctx.font = '700 11px "Microsoft YaHei","PingFang SC",monospace';
+        const cw = Math.min(rect.w - 20, ctx.measureText(line).width + 20);
+        const cx = rect.x + (rect.w - cw) / 2, cy = rect.y + 34;
+        px(ctx, cx, cy, cw, 20, "rgba(8,20,14,0.82)");
+        ctx.strokeStyle = "rgba(245,197,66,0.55)"; ctx.lineWidth = 1; ctx.strokeRect(cx + 0.5, cy + 0.5, cw - 1, 19);
+        txt(ctx, line, rect.x + rect.w / 2, cy + 5, 11, C.cream, "center", "700");
+      }
+    }
+
+    function doorTile() {
+      const m = state.map;
+      for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+        if (m.grid[y][x] === "D") return { x, y };
+      }
+      return null;
+    }
+    function hasAnyFrag(names) {
+      return names && names.some(n => state.inventory.includes(n));
+    }
+    function unpickedPickup(match) {
+      const ps = FILES[state.activeFile].pickups || [];
+      return ps.find(p => !state.pickedUp.includes(pickupKey(p)) && (!match || match.includes(p.frag))) || null;
+    }
+    function currentObjectiveTarget() {
+      const file = state.activeFile;
+      const f = FILES[file];
+      if (!f) return null;
+      if (file === "main.py" && state.mainBreak) return { x: 11, y: 1, label: "出口 →" };
+      if (file === "backlog.py" && !hasAnyFrag(["# scan should be read-only", "return bugs"])) {
+        const pk = unpickedPickup(["# scan should be read-only", "return bugs"]);
+        if (pk) return { x: pk.x, y: pk.y, label: "先拿根因碎片" };
+      }
+      if (file === "runtime_guard.py" && !hasAnyFrag(["log(e)", "raise"])) {
+        const pk = unpickedPickup(["log(e)", "raise"]);
+        if (pk) return { x: pk.x, y: pk.y, label: "拿异常处理碎片" };
+      }
+      const fp = f.focus && f.focus.find(p => !focusSolved(p) && ((p.action === "step") || p.patchable || !state.focusSeen.includes(state.activeFile + ":" + p.line + ":" + p.label)));
+      if (fp) return { x: fp.x, y: fp.y, label: fp.label };
+      const pk = unpickedPickup();
+      if (pk) return { x: pk.x, y: pk.y, label: "线索碎片" };
+      const d = doorTile();
+      if (d) {
+        for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+          const x = d.x + dx, y = d.y + dy;
+          if (canMove(x, y)) return { x, y, label: FILES[file].door ? (FILES[file].door.label || FILES[file].door.to) : "文件门" };
+        }
+      }
+      return null;
+    }
+    function routeTo(target) {
+      if (!target) return [];
+      const m = state.map, start = { x: state.player.gx, y: state.player.gy };
+      const q = [start], prev = new Map([[start.x + "," + start.y, null]]);
+      for (let qi = 0; qi < q.length; qi++) {
+        const p = q[qi];
+        if (p.x === target.x && p.y === target.y) break;
+        for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+          const nx = p.x + dx, ny = p.y + dy, key = nx + "," + ny;
+          if (nx < 0 || ny < 0 || nx >= m.w || ny >= m.h || prev.has(key)) continue;
+          if (!canMove(nx, ny)) continue;
+          prev.set(key, { from: p.x + "," + p.y, x: nx, y: ny });
+          q.push({ x: nx, y: ny });
+        }
+      }
+      const end = target.x + "," + target.y;
+      if (!prev.has(end)) return [];
+      const out = [];
+      let key = end;
+      while (prev.get(key)) {
+        const step = prev.get(key);
+        out.push({ x: step.x, y: step.y });
+        key = step.from;
+      }
+      return out.reverse();
+    }
+    function drawGuideRoute(rect, tile, camX, camY) {
+      if (state.mode !== "explore" || state.inv.open || state.quiz.open || state.help.open || state.guideMode === "off") return;
+      const target = currentObjectiveTarget();
+      if (!target) return;
+      const idle = state.t - state.lastMoveAt;
+      if (state.guideMode === "auto" && idle < 1.25) return;
+      const route = routeTo(target);
+      const alpha = state.guideMode === "route" ? 0.78 : Math.min(0.72, 0.2 + Math.max(0, idle - 0.8) * 0.18);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      const cx = rect.x + (target.x + 0.5) * tile - camX;
+      const cy = rect.y + (target.y + 0.5) * tile - camY;
+      ctx.strokeStyle = C.amber; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, tile * (0.38 + 0.08 * Math.sin(state.t * 5)), 0, Math.PI * 2); ctx.stroke();
+      for (let i = 0; i < route.length; i += 2) {
+        const p = route[i];
+        const x = rect.x + (p.x + 0.5) * tile - camX;
+        const y = rect.y + (p.y + 0.5) * tile - camY;
+        ctx.fillStyle = i % 4 ? C.green2 : C.amber;
+        ctx.fillRect(x - 2, y - 2, 4, 4);
+      }
+      // 焦点光圈和 while/出口 门已经各自带文字标签，这里就别再重复画一遍（之前会出现 “while while” 叠字）
+      const tTile = (state.map.grid[target.y] || [])[target.x];
+      const selfLabeled = tTile === "W" || (FILES[state.activeFile].focus || []).some(p => p.x === target.x && p.y === target.y);
+      if (!selfLabeled && (state.guideMode === "route" || idle > 1.6) && state.t >= state.bot.until) txt(ctx, target.label, cx, cy - tile * 0.62 - 16, Math.max(9, tile * 0.3), C.amber, "center", "700");
+      ctx.restore();
+    }
+    function drawMiniPanel(x, y, w, h, title, body, color) {
+      px(ctx, x, y, w, h, "rgba(2,10,7,0.78)");
+      ctx.strokeStyle = color || C.greenDim; ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      txt(ctx, title, x + 6, y + 5, 10, color || C.green2, "left", "700");
+      if (body) txt(ctx, body, x + 6, y + 20, 10, C.cream, "left", "700");
+    }
+    function drawFileGimmick(rect, tile, camX, camY) {
+      const toX = gx => rect.x + gx * tile - camX;
+      const toY = gy => rect.y + gy * tile - camY;
+      ctx.save();
+      if (state.activeFile === "main.py") {
+        // 右房 W 出口旁的“回流”弧：循环没 break 时把你送回开头
+        if (!state.mainBreak) {
+          const wx = toX(10) + tile / 2, wy = toY(8) + tile / 2;
+          ctx.strokeStyle = "rgba(245,197,66,0.45)"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(wx, wy - tile * 0.35, tile * 0.5, Math.PI * 0.1, Math.PI * 0.9); ctx.stroke();
+        }
+        // 列表房：NPC 散布在各下标站位上，0 号墙人墙堵门；下标位置用 Index=k 标出，remove/insert 时人走过去重排
+        const n = state.npc;
+        if (n && !n.win) {
+          const cfg = FILES["main.py"].npc, slots = cfg.slots, flash = state.t < n.flash, sc = tile / 16;
+          const effLen = n.list.length + (n.preview != null ? 1 : 0);   // 含 insert 预览里腾出的那一位
+          // 1) 下标地标：每个被占用的下标位置画个发光垫 + “Index=k”
+          for (let k = 0; k < effLen && k < slots.length; k++) {
+            const s = slots[k], gx = toX(s.x), gy = toY(s.y), door = k === 0;
+            ctx.fillStyle = door ? "rgba(245,197,66,0.12)" : "rgba(0,185,199,0.09)";
+            ctx.fillRect(gx + 2, gy + 2, tile - 4, tile - 4);
+            ctx.strokeStyle = door ? "rgba(245,197,66,0.55)" : "rgba(0,185,199,0.4)";
+            ctx.lineWidth = 1; ctx.strokeRect(gx + 2.5, gy + 2.5, tile - 5, tile - 5);
+            txt(ctx, "Index=" + k, gx + tile / 2, gy + tile * 0.05, Math.max(8, tile * 0.25), door ? C.amber : C.cyan, "center", "700");
+          }
+          // 2) 写着“7”的地块：append 落点（末尾）；被预览占用时让位不画
+          if (effLen <= 7) {
+            const s7 = slots[7], gx = toX(s7.x), gy = toY(s7.y);
+            ctx.strokeStyle = "rgba(245,197,66,0.4)"; ctx.lineWidth = 1; ctx.strokeRect(gx + 3.5, gy + 3.5, tile - 7, tile - 7);
+            txt(ctx, "7", gx + tile / 2, gy + tile * 0.22, Math.max(13, tile * 0.5), C.amber, "center", "900");
+            txt(ctx, "append 落点", gx + tile / 2, gy + tile * 0.74, Math.max(8, tile * 0.23), C.greenDim, "center", "700");
+          }
+          // 3) NPC（缓动位置）：自带护目机器人素材，胸口编号，脚下当前下标
+          if (!n.pos) updateNpc(0);
+          for (let j = 0; j < n.list.length; j++) {
+            const id = n.list[j], dp = (n.pos && n.pos[id]) || slots[j], blocker = j === 0;
+            const shownIdx = j + ((n.preview != null && j >= n.preview) ? 1 : 0);   // 预览让位后站到的下标
+            const sx = toX(dp.x), sy = toY(dp.y);
+            if (blocker) { ctx.fillStyle = "rgba(255,42,42,0.22)"; ctx.fillRect(sx, sy, tile, tile); }
+            const bob = Math.sin(state.t * 3 + id) * tile * 0.04;
+            ctx.globalAlpha = flash ? 0.6 + 0.4 * Math.sin(state.t * 20) : 1;
+            drawSprite(A.npc[id % A.npc.length][Math.floor(state.t * 3 + id) % 2], sx + (tile - 16 * sc) / 2, sy - tile * 0.30 + bob, sc);
+            ctx.globalAlpha = 1;
+            txt(ctx, String(id), sx + tile / 2, sy + tile * 0.16, Math.max(9, tile * 0.3), C.cream, "center", "900");   // 胸口号
+            txt(ctx, "[" + shownIdx + "]", sx + tile / 2, sy + tile * 0.76, Math.max(8, tile * 0.26), blocker ? C.red2 : C.green2, "center", "700");  // 当前下标
+          }
+        }
+      } else if (state.activeFile === "bug_model.py") {
+        // 对象状态灯：title / level / fixed，三盏灯代表卡片里的字段（放在下方开阔处，不挡房间）
+        const x = toX(1.6), y = toY(8.6);
+        drawMiniPanel(x, y, tile * 4.4, tile * 1.9, "状态灯", "title level fixed", C.cyan);
+        const fixed = state.openedFiles.includes("backlog.py");
+        for (let i = 0; i < 3; i++) {
+          ctx.fillStyle = i === 2 ? (fixed ? C.green2 : C.red2) : C.green2;
+          ctx.beginPath(); ctx.arc(x + 20 + i * 30, y + 50, 5, 0, Math.PI * 2); ctx.fill();
+        }
+      } else if (state.activeFile === "backlog.py") {
+        // 上层 has_open_bug 房：scan 一次队列就多一个，bug 不断冒出来
+        const bump = Math.floor(state.t * 2) % 2;
+        drawMiniPanel(toX(1.4), toY(2.2), tile * 4.6, tile * 1.6, "队列", "bugs: 3 -> " + (4 + bump), C.amber);
+        ctx.save(); ctx.globalAlpha = 0.4 + 0.28 * Math.sin(state.t * 5);
+        drawSprite(A.bug, toX(5), toY(4.2), tile / 16 * 0.6);
+        drawSprite(A.bug, toX(9), toY(5.2), tile / 16 * 0.5);
+        ctx.restore();
+      } else if (state.activeFile === "config.py") {
+        // 左支道危险策略 / 右支道安全策略
+        drawMiniPanel(toX(1.3), toY(5), tile * 4.3, tile * 1.4, "AUTO_APPEND", "True -> append", C.red2);
+        drawMiniPanel(toX(9.3), toY(5), tile * 4.3, tile * 1.4, "read_only", "safe", C.green2);
+      } else if (state.activeFile === "fixer.py") {
+        // 左支道捷径(假) / 右支道正路(真)
+        drawMiniPanel(toX(1.3), toY(5), tile * 4.3, tile * 1.4, "quick_patch", "假 fixed +DEBT", C.red2);
+        drawMiniPanel(toX(9.3), toY(5), tile * 4.3, tile * 1.4, "safe_patch", "真状态 +IDEA", C.green2);
+      } else if (state.activeFile === "verifier.py") {
+        // 左支道字符串门(会被骗) / 右支道状态门(骗不过)
+        drawMiniPanel(toX(1.3), toY(5), tile * 4.3, tile * 1.4, "看字符串", "容易被骗", C.red2);
+        drawMiniPanel(toX(9.3), toY(5), tile * 4.3, tile * 1.4, "看状态", "bug.fixed", C.green2);
+      } else if (state.activeFile === "runtime_guard.py") {
+        // 上层 except 房：红色热砖一直在闷烧；牌子点明 except: pass 把报警静音了
+        const hot = [[3, 3], [5, 4], [9, 4], [11, 3], [4, 5], [10, 5]];
+        for (const [hx, hy] of hot) px(ctx, toX(hx), toY(hy), tile, tile, "rgba(255,42,42," + (0.1 + 0.06 * Math.sin(state.t * 4 + hx)).toFixed(3) + ")");
+        drawMiniPanel(toX(1.4), toY(5.4), tile * 6.4, tile * 1.4, "except: pass", "报警器被静音了", C.red2);
+      }
+      ctx.restore();
+    }
+
+    function drawMapDecor(rect, tile, camX, camY) {
+      const toX = gx => rect.x + gx * tile - camX;
+      const toY = gy => rect.y + gy * tile - camY;
+      // 文件门发光 + 标签（指向当前文件的下一段调用）
+      const m = state.map;
+      const door = FILES[state.activeFile].door;
+      for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+        const ch = m.grid[y][x];
+        if (ch === "T" || ch === "L") {
+          const gx = toX(x), gy = toY(y);
+          const img = ch === "L" ? A.lock : A.terminal;
+          const glow = ch === "L" ? "rgba(255,42,42,0.16)" : "rgba(0,185,199,0.13)";
+          px(ctx, gx + tile * 0.16, gy + tile * 0.72, tile * 0.68, tile * 0.14, glow);
+          drawSprite(img, gx + tile * 0.12, gy + tile * 0.12, tile / 16 * 0.82);
+        }
+        if (m.grid[y][x] === "D") {
+          const gx = toX(x), gy = toY(y);
+          const pulse = 0.4 + state.titleT * 0.5;
+          const locked = !!(door && door.locked);
+          ctx.fillStyle = locked ? `rgba(245,197,66,${pulse * 0.2})` : `rgba(0,255,102,${pulse * 0.25})`;
+          ctx.fillRect(gx - 4, gy - 4, tile + 8, tile + 8);
+          const label = (door ? (door.label || door.to) : "") + (locked ? "  🔒" : "");
+          txt(ctx, label, gx + tile / 2, gy - 14, Math.max(9, tile * 0.32), locked ? C.amber : C.green2, "center", "700");
+        }
+        if (m.grid[y][x] === "W") {
+          // while True 循环门：未补 break = 琥珀回流；补上 break = 绿色出口
+          const gx = toX(x), gy = toY(y), open = state.mainBreak;
+          const pulse = 0.4 + state.titleT * 0.5;
+          ctx.fillStyle = open ? `rgba(0,255,102,${pulse * 0.25})` : `rgba(245,197,66,${pulse * 0.22})`;
+          ctx.fillRect(gx - 4, gy - 4, tile + 8, tile + 8);
+          ctx.strokeStyle = open ? C.green2 : C.amber; ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(gx + tile / 2, gy + tile / 2, tile * (0.32 + 0.04 * Math.sin(state.t * 5)), 0, Math.PI * 2);
+          ctx.stroke();
+          txt(ctx, open ? "出口 →" : "while True ↺", gx + tile / 2, gy - 14, Math.max(9, tile * 0.3), open ? C.green2 : C.amber, "center", "700");
+        }
+        if (m.grid[y][x] === "d") {
+          // 死路门：看着像门，门框打了叉——走过去触发 rollback / 回原点
+          const gx = toX(x), gy = toY(y);
+          const dd = (FILES[state.activeFile].deadDoors || []).find(o => o.x === x && o.y === y);
+          ctx.fillStyle = "rgba(245,197,66,0.15)"; ctx.fillRect(gx - 3, gy - 3, tile + 6, tile + 6);
+          ctx.strokeStyle = C.amber; ctx.lineWidth = 2;
+          ctx.strokeRect(gx + tile * 0.18, gy + tile * 0.12, tile * 0.64, tile * 0.78);
+          ctx.beginPath();
+          ctx.moveTo(gx + tile * 0.24, gy + tile * 0.2); ctx.lineTo(gx + tile * 0.76, gy + tile * 0.82);
+          ctx.stroke();
+          txt(ctx, dd && dd.kind === "origin" ? "门·回原点" : "门·死路", gx + tile / 2, gy - 14, Math.max(9, tile * 0.3), C.amber, "center", "700");
+        }
+      }
+      // 收束点位（focus pads）：发光 ⟳ 圆环 + 行标签
+      const focs = FILES[state.activeFile].focus;
+      if (focs) for (const fp of focs) {
+        const cx0 = toX(fp.x) + tile / 2, cy0 = toY(fp.y) + tile / 2;
+        const pulse = 0.5 + 0.35 * Math.sin(state.t * 4 + fp.x);
+        const col = fp.locked ? "245,197,66" : "0,185,199";
+        ctx.fillStyle = `rgba(${col},${(pulse * 0.18).toFixed(3)})`;
+        ctx.beginPath(); ctx.arc(cx0, cy0, tile * 0.5, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = `rgba(${col},${pulse.toFixed(2)})`; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(cx0, cy0, tile * 0.34, 0.4, Math.PI * 1.75); ctx.stroke();
+        const ang = Math.PI * 1.75;
+        ctx.fillStyle = fp.locked ? C.amber : C.cyan;
+        ctx.fillRect(cx0 + Math.cos(ang) * tile * 0.34 - 2, cy0 + Math.sin(ang) * tile * 0.34 - 2, 4, 4);
+        txt(ctx, fp.label, cx0, cy0 - tile * 0.5 - 13, Math.max(9, tile * 0.32), fp.locked ? C.amber : C.green2, "center", "700");
+      }
+      // 碎片拾取物（发光 </>）
+      const pus = FILES[state.activeFile].pickups;
+      if (pus) for (const pk of pus) {
+        if (state.pickedUp.includes(pickupKey(pk))) continue;
+        const cx1 = toX(pk.x) + tile / 2, cy1 = toY(pk.y) + tile / 2 + Math.sin(state.t * 3 + pk.x) * 2;
+        ctx.fillStyle = `rgba(0,255,102,${(0.14 + 0.1 * Math.sin(state.t * 4 + pk.x)).toFixed(3)})`;
+        ctx.beginPath(); ctx.arc(cx1, cy1, tile * 0.4, 0, Math.PI * 2); ctx.fill();
+        drawSprite(A.shard, cx1 - tile * 0.36, cy1 - tile * 0.38, tile / 16 * 0.72);
+      }
+      if (state.activeFile === "backlog.py" && state.t < state.hiddenGateT) drawHiddenGateOverlay(rect, tile, camX, camY);
+    }
+
+    function drawHiddenGateOverlay(rect, tile, camX, camY) {
+      const x = rect.x + (8 + 0.5) * tile - camX;
+      const y = rect.y + (8 + 0.5) * tile - camY;
+      const missing = hiddenGateMissing();
+      ctx.save();
+      ctx.globalAlpha = 0.92;
+      ctx.strokeStyle = C.amber;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, tile * (0.82 + 0.08 * Math.sin(state.t * 9)), 0, Math.PI * 2);
+      ctx.stroke();
+      const w = Math.min(rect.w - 28, 260), h = 54;
+      const bx = clamp(x - w / 2, rect.x + 10, rect.x + rect.w - w - 10);
+      const by = clamp(y - tile * 2.2, rect.y + 10, rect.y + rect.h - h - 10);
+      px(ctx, bx, by, w, h, "rgba(36,28,6,0.92)");
+      ctx.strokeRect(bx + 0.5, by + 0.5, w - 1, h - 1);
+      txt(ctx, "scanner.py 证据锁", bx + 10, by + 8, 11, C.amber, "left", "700");
+      txt(ctx, fitLine("缺：" + missing.join(" / "), w - 20, 10, "700"), bx + 10, by + 27, 10, C.cream, "left", "700");
+      ctx.restore();
+    }
+
+    function bugPosition(b) {
+      const t = state.t * b.speed + b.phase;
+      let x = b.homeX, y = b.homeY;
+      if (b.patrol === "h") x += Math.sin(t) * b.amp;
+      else if (b.patrol === "v") y += Math.sin(t) * b.amp;
+      else {
+        x += Math.cos(t) * b.amp;
+        y += Math.sin(t) * b.amp * 0.55;
+      }
+      return { x, y };
+    }
+    function drawBugs(rect, tile, camX, camY) {
+      for (const b of state.map.bugs) {
+        const pos = bugPosition(b);
+        const hx = rect.x + (b.homeX + 0.5) * tile - camX;
+        const hy = rect.y + (b.homeY + 0.5) * tile - camY;
+        ctx.save();
+        ctx.globalAlpha = b.extra ? 0.7 : 0.45;
+        ctx.strokeStyle = b.extra ? "rgba(255,107,107,0.55)" : "rgba(255,42,42,0.35)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        if (b.patrol === "h") {
+          ctx.moveTo(hx - b.amp * tile, hy);
+          ctx.lineTo(hx + b.amp * tile, hy);
+        } else if (b.patrol === "v") {
+          ctx.moveTo(hx, hy - b.amp * tile);
+          ctx.lineTo(hx, hy + b.amp * tile);
+        } else {
+          ctx.ellipse(hx, hy, b.amp * tile, b.amp * tile * 0.55, 0, 0, Math.PI * 2);
+        }
+        ctx.stroke();
+        ctx.restore();
+
+        const bob = Math.sin(state.t * 5 + b.t) * tile * 0.08;
+        const sx = rect.x + pos.x * tile - camX, sy = rect.y + pos.y * tile - camY + bob;
+        const heat = 0.22 + 0.12 * Math.sin(state.t * 6 + b.phase);
+        ctx.fillStyle = `rgba(255,42,42,${heat.toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(sx + tile * 0.5, sy + tile * 0.55, tile * (b.extra ? 0.55 : 0.45), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "rgba(255,42,42,0.18)";
+        ctx.fillRect(sx + tile * 0.18, sy + tile * 0.7, tile * 0.64, tile * 0.18);
+        drawSprite(A.bug, sx + tile * 0.12, sy + tile * 0.06, tile / 16 * (b.extra ? 0.9 : 0.82));
+      }
+    }
+
+    function drawBot(rect, tile, camX, camY) {
+      const bp = state.map.botPos;
+      const bob = Math.sin(state.t * 2.4) * tile * 0.1;
+      const sx = rect.x + bp.x * tile - camX, sy = rect.y + bp.y * tile - camY + bob;
+      ctx.fillStyle = "rgba(0,185,199,0.16)";
+      ctx.fillRect(sx + tile * 0.2, sy + tile * 0.78, tile * 0.6, tile * 0.16);
+      drawSprite(A.bot, sx + tile * 0.1, sy, tile / 16 * 0.9);
+      // 头顶提示符
+      if (state.t < state.bot.until) {
+        const py = sy - tile * 0.35 + Math.sin(state.t * 4) * 2;
+        txt(ctx, "!", sx + tile * 0.5, py, tile * 0.4, C.green2, "center", "900");
+      }
+    }
+
+    function drawPlayer(rect, tile, camX, camY) {
+      const p = state.player;
+      const img = A.player[p.dir][p.frame];
+      const sx = rect.x + p.fx * tile - camX + (tile - 16 * (tile / 16)) / 2;
+      const sy = rect.y + p.fy * tile - camY - tile * 0.28;
+      const scale = tile / 16;
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.fillRect(sx + tile * 0.18, sy + tile * 1.12, tile * 0.64, tile * 0.16);
+      drawSprite(img, sx, sy, scale);
+    }
+
+    function drawStatus(rect) {
+      px(ctx, rect.x, rect.y, rect.w, rect.h, "#06140d");
+      px(ctx, rect.x, rect.y, rect.w, 2, "#0c2d1e");
+      const ty = rect.y + 8;
+      // CPU 温度
+      txt(ctx, "CPU", 12, ty, 12, C.greenDim, "left", "700");
+      const heat = state.cpuHeat;
+      const heatCol = heat >= 85 ? C.red : heat >= 60 ? C.amber : C.green2;
+      txt(ctx, heat + "°C", 44, ty, 12, heatCol, "left", "700");
+      // 时间（随进度增加；>3h 触发睡意 Boss——待接）
+      const timeCol = state.gameTime >= 3 ? C.red2 : state.gameTime >= 2 ? C.amber : C.cyan;
+      txt(ctx, "· " + state.gameTime.toFixed(1) + "h", 90, ty, 12, timeCol, "left", "700");
+      txt(ctx, "· DEBT " + state.techDebt, 142, ty, 12, C.greenDim, "left", "700");
+      const ideaX = rect.w < 390 ? 210 : 224;
+      txt(ctx, "· IDEA " + state.insight, ideaX, ty, 12, state.comboUntil > state.t ? C.amber : C.greenDim, "left", "700");
+      // 面包屑（当前文件 › 关键调用）
+      const f = FILES[state.activeFile];
+      const compact = rect.w < 430;
+      const full = compact ? f.title : f.title + " › " + f.crumb;
+      ctx.font = '700 11px "Microsoft YaHei","PingFang SC",monospace';
+      const maxW = compact ? 74 : rect.w * 0.5;
+      let crumb = full;
+      if (ctx.measureText(full).width > maxW) {
+        while (crumb.length > 3 && ctx.measureText(crumb + "…").width > maxW) crumb = crumb.slice(0, -1);
+        crumb += "…";
+      }
+      txt(ctx, crumb, rect.w - 12, ty, 11, "#7fffc4", "right", "700");
+    }
+
+    function drawTabs(rect) {
+      px(ctx, rect.x, rect.y, rect.w, rect.h, C.panel);
+      ctx.font = '700 12px "Microsoft YaHei","PingFang SC",monospace';
+      // 先量出所有标签（含锁定的下一个）的宽度和位置
+      const items = [];
+      let ax = 12;
+      for (const f of state.openedFiles) {
+        if (FILES[f] && FILES[f].roomOnly) continue;   // 房间型伪文件不进标签栏（如列表房，仍显示在 main.py 名下）
+        const tw = Math.max(82, ctx.measureText(f).width + 26);
+        items.push({ kind: "tab", f, label: f, x0: ax, tw }); ax += tw + 8;
+      }
+      const next = FILE_ORDER.find(n => !state.openedFiles.includes(n));
+      if (next) {
+        const label = next.replace(".py", "");
+        const tw = Math.max(64, ctx.measureText(label).width + 30);
+        items.push({ kind: "lock", label, x0: ax, tw }); ax += tw + 8;
+      }
+      const total = ax;
+      const overflow = total > rect.w;
+      const arrowW = overflow ? 58 : 0;         // 两个箭头各 26 + 间隙
+      const viewW = rect.w - arrowW;            // 右侧给滚动箭头留位
+      // 自动滚动：让当前标签始终在可视区内
+      const act = items.find(t => t.f === state.activeFile);
+      if (act) {
+        if (act.x0 - state.tabScroll < 8) state.tabScroll = act.x0 - 8;
+        else if (act.x0 + act.tw - state.tabScroll > viewW - 8) state.tabScroll = act.x0 + act.tw - viewW + 8;
+      }
+      const maxScroll = Math.max(0, total - viewW);
+      state.tabScroll = clamp(state.tabScroll, 0, maxScroll);
+      // 裁剪标签区，画标签（带横向滚动偏移）
+      ctx.save();
+      ctx.beginPath(); ctx.rect(rect.x, rect.y, viewW, rect.h); ctx.clip();
+      for (const t of items) {
+        const x = t.x0 - state.tabScroll;
+        if (x + t.tw < rect.x || x > rect.x + viewW) continue;   // 完全不可见就跳过
+        if (t.kind === "tab") {
+          const active = t.f === state.activeFile;
+          px(ctx, x, rect.y + 6, t.tw, 22, active ? "#08231a" : "#06120c");
+          ctx.strokeStyle = active ? C.green : C.greenDark; ctx.lineWidth = active ? 2 : 1;
+          ctx.strokeRect(x + 1, rect.y + 7, t.tw - 2, 20);
+          if (active) px(ctx, x, rect.y + 6, t.tw, 2, C.green);
+          txt(ctx, t.f, x + 13, rect.y + 11, 12, active ? C.green2 : C.greenDim, "left", "700");
+          const fx = t.f, bxr = Math.max(rect.x, x), bwr = Math.min(x + t.tw, rect.x + viewW) - bxr;
+          if (bwr > 8) state.buttons.push({ x: bxr, y: rect.y + 6, w: bwr, h: 22, tap: () => switchTab(fx) });
+        } else {
+          px(ctx, x, rect.y + 6, t.tw, 22, "#0c0a06");
+          ctx.strokeStyle = "#3a2a0a"; ctx.lineWidth = 1; ctx.strokeRect(x + 1, rect.y + 7, t.tw - 2, 20);
+          txt(ctx, "🔒", x + 7, rect.y + 11, 11, "#7a5a1a", "left");
+          txt(ctx, t.label, x + 24, rect.y + 11, 12, "#6a5a2a", "left", "700");
+          const bxr = Math.max(rect.x, x), bwr = Math.min(x + t.tw, rect.x + viewW) - bxr;
+          if (bwr > 8) state.buttons.push({ x: bxr, y: rect.y + 6, w: bwr, h: 22, tap: () => showBot(BOT_LINES.doorLocked) });
+        }
+      }
+      ctx.restore();
+      // 横向滚动箭头（标签放不下时才出现，叠在最右侧）
+      if (overflow) {
+        const bw = 26, bx = rect.x + rect.w - bw - 2, byTop = rect.y + 6;
+        px(ctx, bx, byTop, bw, 22, "#06120c");
+        ctx.strokeStyle = state.tabScroll < maxScroll ? C.green : C.greenDark; ctx.lineWidth = 1;
+        ctx.strokeRect(bx + 0.5, byTop + 0.5, bw - 1, 21);
+        txt(ctx, "›", bx + bw / 2, rect.y + 9, 16, state.tabScroll < maxScroll ? C.green2 : "#2a4a3a", "center", "700");
+        state.buttons.push({ x: bx, y: byTop, w: bw, h: 22, tap: () => { state.tabScroll = clamp(state.tabScroll + 110, 0, maxScroll); } });
+        const bx2 = bx - bw - 2;
+        px(ctx, bx2, byTop, bw, 22, "#06120c");
+        ctx.strokeStyle = state.tabScroll > 0 ? C.green : C.greenDark; ctx.lineWidth = 1;
+        ctx.strokeRect(bx2 + 0.5, byTop + 0.5, bw - 1, 21);
+        txt(ctx, "‹", bx2 + bw / 2, rect.y + 9, 16, state.tabScroll > 0 ? C.green2 : "#2a4a3a", "center", "700");
+        state.buttons.push({ x: bx2, y: byTop, w: bw, h: 22, tap: () => { state.tabScroll = clamp(state.tabScroll - 110, 0, maxScroll); } });
+      }
+    }
+
+    function drawCode(rect) {
+      px(ctx, rect.x, rect.y, rect.w, rect.h, "#020705");
+      px(ctx, rect.x + 6, rect.y + 5, rect.w - 12, rect.h - 10, "#04100a");
+      ctx.strokeStyle = C.panelEdge; ctx.lineWidth = 1;
+      ctx.strokeRect(rect.x + 6.5, rect.y + 5.5, rect.w - 13, rect.h - 11);
+      ctx.save();
+      ctx.beginPath(); ctx.rect(rect.x + 8, rect.y + 7, rect.w - 16, rect.h - 14); ctx.clip();
+      const code = CODE[state.activeFile];
+      const hl = (state.mode === "focus" && state.focus) ? state.focus.line : explorerHighlight();
+      const lineH = 16;
+      const visible = Math.floor((rect.h - 16) / lineH);
+      let target = Math.max(0, hl - 1 - Math.floor(visible / 2));
+      target = Math.min(target, Math.max(0, code.length - visible));
+      // 平滑滚动：codeScroll 缓动逼近目标行（切换文件时直接吸附）
+      if (state.codeScrollFile !== state.activeFile) { state.codeScroll = target; state.codeScrollFile = state.activeFile; }
+      state.codeScroll += (target - state.codeScroll) * 0.22;
+      if (Math.abs(target - state.codeScroll) < 0.03) state.codeScroll = target;
+      const scroll = state.codeScroll, startI = Math.floor(scroll), subOff = (scroll - startI) * lineH;
+      for (let i = -1; i <= visible && startI + i < code.length; i++) {
+        const idx = startI + i;
+        if (idx < 0) continue;
+        const ln = idx + 1;
+        const yy = rect.y + 10 + i * lineH - subOff;
+        const hot = ln === hl;
+        if (hot) {
+          px(ctx, rect.x + 10, yy - 1, rect.w - 20, lineH, "rgba(0,255,102,0.10)");
+          txt(ctx, "▸", rect.x + 12, yy, 11, C.green2, "left", "700");
+        }
+        const badge = codeLineBadge(state.activeFile, ln);
+        if (badge && !hot) px(ctx, rect.x + 10, yy - 1, rect.w - 20, lineH, badge.bg);
+        txt(ctx, String(ln).padStart(2, "0"), rect.x + 24, yy, 11, hot ? C.green2 : "#0a6a3c", "left", "700");
+        const line = codeLineOf(state.activeFile, idx);
+        const t = line.trim();
+        const isComment = t.startsWith("#");
+        const kw = t.startsWith("from") || t.startsWith("print") || t.startsWith("class") || t.startsWith("def");
+        const COMMENT_COL = "#8fc4a4";   // 注释提亮，手机上也看得清
+        const col = isComment ? COMMENT_COL : hot ? C.green2 : badge ? badge.color : kw ? C.greenDim : "#1aa85a";
+        ctx.font = '400 11px "Microsoft YaHei","PingFang SC",monospace';
+        // 给右侧徽章留位
+        const badgeW = badge ? Math.min(78, ctx.measureText(badge.text).width + 12) + 12 : 0;
+        const maxLW = rect.w - 48 - 12 - badgeW;
+        const trunc = (s, w) => { if (ctx.measureText(s).width <= w) return s; while (s.length > 1 && ctx.measureText(s + "…").width > w) s = s.slice(0, -1); return s + "…"; };
+        const ci = isComment ? -1 : (line || "").indexOf("#");
+        if (ci > 0) {
+          // 行内注释：代码用代码色、注释用亮色，并优先保住注释（手机上别被截掉）
+          let codePart = line.slice(0, ci);
+          const cmt = line.slice(ci);
+          const codeBudget = Math.max(maxLW * 0.42, maxLW - ctx.measureText(cmt).width - 4);
+          codePart = trunc(codePart, codeBudget);
+          const cw = ctx.measureText(codePart).width;
+          txt(ctx, codePart, rect.x + 48, yy, 11, col, "left");
+          txt(ctx, trunc(cmt, maxLW - cw - 4), rect.x + 48 + cw + 4, yy, 11, COMMENT_COL, "left");
+        } else {
+          txt(ctx, trunc(line || " ", maxLW), rect.x + 48, yy, 11, col, "left");
+        }
+        if (badge) {
+          const bw = Math.min(78, ctx.measureText(badge.text).width + 12);
+          const bx = rect.x + rect.w - bw - 16;
+          px(ctx, bx, yy + 1, bw, 13, badge.bg);
+          ctx.strokeStyle = badge.color; ctx.lineWidth = 1; ctx.strokeRect(bx + 0.5, yy + 1.5, bw - 1, 12);
+          txt(ctx, badge.text, bx + bw / 2, yy + 3, 9, badge.color, "center", "700");
+        }
+      }
+      drawCodeTrace(rect);
+      // 收束态：压暗聚焦行以外的代码
+      if (state.mode === "focus" && state.focus) {
+        const hotY = rect.y + 10 + (hl - 1 - scroll) * lineH;
+        ctx.fillStyle = "rgba(2,7,5,0.6)";
+        ctx.fillRect(rect.x + 8, rect.y + 7, rect.w - 16, Math.max(0, hotY - rect.y - 8));
+        const belowY = hotY + lineH - 1;
+        ctx.fillRect(rect.x + 8, belowY, rect.w - 16, Math.max(0, rect.y + rect.h - 7 - belowY));
+      }
+      ctx.restore();
+    }
+
+    // 探索态：代码高亮跟着角色走到的房间联动（每个文件用 zones 声明“哪块区域 → 高亮哪行”）
+    function explorerHighlight() {
+      if (state.dlg) return state.dlg.steps[state.dlg.i].n;   // 对话进行中：高亮当前这句对应的代码行
+      const f = state.activeFile, fp = FILES[f];
+      if (fp && fp.zones) {
+        const p = state.player, x = p.gx, y = p.gy;
+        for (const z of fp.zones) {
+          if (x >= z.x0 && x <= z.x1 && y >= z.y0 && y <= z.y1) return z.line;
+        }
+      }
+      return fp ? fp.highlight : 1;
+    }
+    // 进房对话：bot 逐句念代码里的 bot_say，对应行高亮；sys 行用屏幕中央淡入淡出
+    function checkDialogue(x, y) {
+      if (state.dlg) return;
+      const ds = FILES[state.activeFile] && FILES[state.activeFile].dialogues;
+      if (!ds) return;
+      for (const dd of ds) {
+        if (state.dlgSeen.includes(dd.key)) continue;
+        const z = dd.zone;
+        if (x >= z.x0 && x <= z.x1 && y >= z.y0 && y <= z.y1) { startDlg(dd); return; }
+      }
+    }
+    function startDlg(dd) { state.dlgSeen.push(dd.key); state.dlg = { steps: dd.steps, i: 0 }; showDlgStep(); }
+    function showDlgStep() {
+      const dlg = state.dlg; if (!dlg) return;
+      const s = dlg.steps[dlg.i];
+      if (s.sys) { state.sysMsg = s.t; state.bot.until = 0; }
+      else { state.sysMsg = null; showBot(s.t, 99); }
+      sfx.bot();
+    }
+    function advanceDlg() {
+      const dlg = state.dlg; if (!dlg) return;
+      dlg.i++;
+      if (dlg.i >= dlg.steps.length) { state.dlg = null; state.sysMsg = null; if (state.bot) state.bot.until = state.t + 3; }
+      else showDlgStep();
+    }
+    function codeLineBadge(file, ln) {
+      if (file === "main.py" && ln === 19) return { text: "选路", color: C.cyan, bg: "rgba(0,185,199,0.08)" };
+      if (file === "main.py" && ln === 24) return { text: "LOOP", color: C.amber, bg: "rgba(245,197,66,0.10)" };
+      if (file === "main.py" && ln === 33) return state.mainBreak
+        ? { text: "FIXED", color: C.green2, bg: "rgba(57,255,136,0.12)" }
+        : { text: "该 break", color: C.red2, bg: "rgba(255,42,42,0.10)" };
+      if (file === "main.py" && ln === 45) return { text: "列表", color: C.cyan, bg: "rgba(0,185,199,0.08)" };
+      if (file === "bug_model.py" && ln === 11) return { text: hasEvidence("fixed_state") ? "EVIDENCE" : "STATE", color: hasEvidence("fixed_state") ? C.cyan : C.amber, bg: "rgba(0,185,199,0.10)" };
+      if (file === "bug_model.py" && ln === 16) return { text: "真修复", color: C.green2, bg: "rgba(57,255,136,0.08)" };
+      if (file === "backlog.py" && ln === 20) return { text: scannerGateOpen() ? "HIDDEN OPEN" : "LOCKED", color: scannerGateOpen() ? C.green2 : C.amber, bg: scannerGateOpen() ? "rgba(57,255,136,0.10)" : "rgba(245,197,66,0.10)" };
+      if (file === "config.py" && ln === 7) return { text: hasEvidence("auto_append") ? "EVIDENCE" : "ON", color: hasEvidence("auto_append") ? C.cyan : C.red2, bg: "rgba(255,42,42,0.10)" };
+      if (file === "config.py" && ln === 18) return { text: "安全", color: C.green2, bg: "rgba(57,255,136,0.08)" };
+      if (file === "fixer.py" && ln === 19) return { text: "假修复", color: C.red2, bg: "rgba(255,42,42,0.10)" };
+      if (file === "fixer.py" && ln === 24) return { text: "真修复", color: C.green2, bg: "rgba(57,255,136,0.10)" };
+      if (file === "scanner.py" && ln === 16) return { text: "APPEND", color: C.red2, bg: "rgba(255,42,42,0.12)" };
+      if (file === "verifier.py" && ln === 11) return (state.codeOverrides["verifier.py"] && state.codeOverrides["verifier.py"][10])
+        ? { text: "已修", color: C.green2, bg: "rgba(57,255,136,0.12)" }
+        : { text: "信字符串", color: C.amber, bg: "rgba(245,197,66,0.10)" };
+      if (file === "verifier.py" && ln === 19) return { text: "真标准", color: C.green2, bg: "rgba(57,255,136,0.08)" };
+      if (file === "runtime_guard.py" && ln === 16) return (state.codeOverrides["runtime_guard.py"] && state.codeOverrides["runtime_guard.py"][15])
+        ? { text: "已修", color: C.green2, bg: "rgba(57,255,136,0.12)" }
+        : { text: "MUTED", color: C.red2, bg: "rgba(255,42,42,0.10)" };
+      if (file === "runtime_guard.py" && ln === 25) return { text: "记录", color: C.green2, bg: "rgba(57,255,136,0.08)" };
+      return null;
+    }
+
+    function drawCodeTrace(rect) {
+      if (!state.trace.length) return;
+      const w = Math.min(rect.w - 34, 360);
+      const h = Math.min(58, 18 + state.trace.slice(-3).length * 13);
+      const x = rect.x + rect.w - w - 14;
+      const y = rect.y + rect.h - h - 12;
+      px(ctx, x, y, w, h, "rgba(1,8,5,0.86)");
+      ctx.strokeStyle = "rgba(0,185,199,0.55)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      txt(ctx, "TRACE", x + 8, y + 5, 9, C.cyan, "left", "700");
+      const items = state.trace.slice(-3);
+      for (let i = 0; i < items.length; i++) {
+        txt(ctx, fitLine(items[i].text, w - 18, 9, "700"), x + 8, y + 18 + i * 13, 9, items[i].color || C.green2, "left", "700");
+      }
+    }
+
+    function drawControls(rect) {
+      px(ctx, rect.x, rect.y, rect.w, rect.h, C.bg);
+      px(ctx, rect.x, rect.y, rect.w, 2, "#02100a");
+
+      // 方向键
+      const s = Math.min(46, Math.max(36, rect.h * 0.29)), gap = 6;
+      const bx = 22, by = rect.y + (rect.h - s * 3 - gap * 2) / 2;
+      padBtn(bx + s + gap, by, s, "▲", "up");
+      padBtn(bx, by + s + gap, s, "◀", "left");
+      padBtn(bx + s + gap, by + s + gap, s, "▼", "down");
+      padBtn(bx + (s + gap) * 2, by + s + gap, s, "▶", "right");
+
+      // 动作键（2x2），锚定在方向键右侧避免重叠
+      const dpadRight = bx + s * 3 + gap * 2;
+      const ag = 7, ah = 30;
+      const aLeft = dpadRight + 16;
+      const aw = Math.min(112, Math.max(72, (rect.w - aLeft - 14 - ag) / 2));
+      const ax = rect.w - aw * 2 - ag - 14, ay = rect.y + 12;
+      actBtn(ax, ay, aw, ah, "run()|看表面", "run");
+      actBtn(ax + aw + ag, ay, aw, ah, "step_into()|进内部", "step");
+      if (state.patchUnlocked) actBtn(ax, ay + ah + ag, aw, ah, "patch()|贴证据", "patch");
+      if (state.rollbackUnlocked) actBtn(ax + aw + ag, ay + ah + ag, aw, ah, "rollback()|撤回", "rollback");
+      const invY = ay + (ah + ag) * 2 + 2;
+      txt(ctx, "</>  碎片 " + state.inventory.length + "/7", ax, invY, 11, C.green2, "left", "700");
+      state.buttons.push({ x: ax, y: invY - 4, w: aw, h: 20, tap: () => openInv("view") });
+      const hw = 46, hgap = 6;
+      const hx2 = rect.w - hw - 14;          // 提示（最右）
+      const hx1 = hx2 - hw - hgap;           // 纵览（提示左侧）
+      btnBox(hx1, invY - 6, hw, 22, C.cyanDim, "#04100a");
+      txt(ctx, "纵览", hx1 + hw / 2, invY - 1, 11, "#7fffc4", "center", "700");
+      state.buttons.push({ x: hx1, y: invY - 6, w: hw, h: 22, tap: () => { state.peek.open = true; sfx.bot(); } });
+      btnBox(hx2, invY - 6, hw, 22, state.guideMode === "off" ? C.greenDark : C.cyanDim, "#04100a");
+      txt(ctx, "提示", hx2 + hw / 2, invY - 1, 11, state.guideMode === "off" ? C.greenDim : "#7fffc4", "center", "700");
+      state.buttons.push({ x: hx2, y: invY - 6, w: hw, h: 22, tap: () => { state.help.open = true; } });
+    }
+
+    function padBtn(x, y, s, label, dir) {
+      const locked = state.mode === "focus";
+      const active = state.held === dir;
+      btnBox(x, y, s, s, locked ? "#0c2a22" : (active ? C.green : C.cyanDim), active ? "#0a3322" : "#06130d");
+      txt(ctx, label, x + s / 2, y + s / 2 - 9, 18, locked ? "#1d4a3c" : (active ? C.black : C.green2), "center", "900");
+      state.buttons.push({
+        x, y, w: s, h: s,
+        down: () => {
+          if (state.scene === "game" && state.mode === "focus") return;
+          state.held = dir; state.queue = dir;
+          if (state.scene === "game") tryStep(dir);
+        },
+        up: () => { if (state.held === dir) state.held = null; }
+      });
+    }
+    function actBtn(x, y, w, h, label, key) {
+      let line = C.greenDark, fill = "#05120c", col = C.green2, pulse = 0;
+      if (state.mode === "focus" && state.focus) {
+        const ks = focusKeyState(key);
+        if (ks.locked) { line = C.amber; fill = "#241c06"; col = C.amber; }
+        else if (ks.primary) { line = C.green; fill = "#0a3322"; pulse = 0.4 + 0.5 * Math.sin(state.t * 6); }
+        else if (ks.enabled) { line = C.cyanDim; fill = "#07120d"; col = "#7fffc4"; }
+        else { line = "#142018"; fill = "#070d0a"; col = "#2a4434"; }
+      }
+      btnBox(x, y, w, h, line, fill);
+      if (pulse) { ctx.strokeStyle = `rgba(57,255,136,${pulse.toFixed(2)})`; ctx.lineWidth = 2; ctx.strokeRect(x + 2, y + 2, w - 4, h - 4); }
+      const parts = label.split("|");
+      if (parts.length > 1) {
+        txt(ctx, fitLine(parts[0], w - 8, 10, "700"), x + w / 2, y + 5, 10, col, "center", "700");
+        txt(ctx, fitLine(parts[1], w - 8, 10, "700"), x + w / 2, y + 17, 10, col, "center", "700");
+      } else {
+        txt(ctx, label, x + w / 2, y + h / 2 - 7, label.length > 9 ? 11 : 12, col, "center", "700");
+      }
+      state.buttons.push({ x, y, w, h, tap: () => onAction(key) });
+    }
+    function onAction(key) {
+      if (state.mode === "focus") { doFocusAction(key); return; }
+      if (key === "rollback") { doRollback(); return; }
+      sfx.bot();
+      if (key === "run") showBot(BOT_LINES.run);
+      else if (key === "step") showBot(BOT_LINES.step);
+      else if (key === "patch") showBot(state.patchUnlocked ? BOT_LINES.patch : "先捡到碎片，patch() 才会解锁。");
+    }
+    function showBot(msg, dur) { state.bot.msg = msg; state.bot.until = state.t + (dur || 5); }
+
+    function fitLine(s, maxW, size, weight = "400") {
+      ctx.font = `${weight} ${size}px "Microsoft YaHei","PingFang SC",monospace`;
+      if (ctx.measureText(s).width <= maxW) return s;
+      let out = s;
+      while (out.length > 2 && ctx.measureText(out + "…").width > maxW) out = out.slice(0, -1);
+      return out + "…";
+    }
+    function wrapLines(s, maxW, size) {
+      ctx.font = `400 ${size}px "Microsoft YaHei","PingFang SC",monospace`;
+      const lines = []; let line = "";
+      for (const ch of s) {
+        if (ch === "\n") { lines.push(line); line = ""; continue; }
+        if (ctx.measureText(line + ch).width > maxW) { lines.push(line); line = ch; }
+        else line += ch;
+      }
+      if (line) lines.push(line);
+      return lines;
+    }
+    function drawBotDialog(rect) {
+      if (state.t >= state.bot.until) return;
+      const W = state.W;
+      const bw = Math.min(W - 24, 360), bx = (W - bw) / 2;
+      const size = 12, lineH = 15;
+      const lines = wrapLines(state.bot.msg, bw - 58, size);
+      const bh = Math.max(50, 30 + lines.length * lineH);
+      const by = rect.y + rect.h - bh - 10;
+      px(ctx, bx, by, bw, bh, "rgba(4,18,12,0.95)");
+      ctx.strokeStyle = C.greenDim; ctx.lineWidth = 1.5; ctx.strokeRect(bx + 1, by + 1, bw - 2, bh - 2);
+      drawSprite(A.bot, bx + 8, by + 11, 2);
+      txt(ctx, "DebugBot", bx + 46, by + 9, 11, C.cyan, "left", "700");
+      for (let i = 0; i < lines.length; i++) txt(ctx, lines[i], bx + 46, by + 25 + i * lineH, size, C.green2, "left");
+      if (state.dlg) txt(ctx, "▸ 点击继续", bx + bw - 10, by + 9, 9, "rgba(0,185,199,0.75)", "right", "700");
+    }
+
+    function btnBox(x, y, w, h, line, fill) {
+      px(ctx, x, y, w, h, fill);
+      ctx.strokeStyle = line; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+      px(ctx, x + 3, y + 3, w - 6, 2, "rgba(255,255,255,0.05)");
+    }
+    function pixelButton(x, y, w, h, label, line, fill, onClick) {
+      btnBox(x, y, w, h, line, fill);
+      const th = Math.min(26, h * 0.5);
+      blockTitleText(
+        [{ s: label, fill: C.green2 }],
+        x + w / 2,
+        y + (h - th) / 2,
+        th,
+        { rows: 26, maxW: w - 36, coverage: 0.13, outline: "#04140c", shadow: { x: 1, y: 1, fill: "#001b10" } }
+      );
+      state.buttons.push({ x, y, w, h, tap: onClick });
+    }
+
+    // ================= 移动逻辑 =================
+    function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+    function canMove(x, y) {
+      const m = state.map;
+      if (x < 0 || y < 0 || x >= m.w || y >= m.h) return false;
+      const c = m.grid[y][x];
+      return c !== "#" && c !== "D" && c !== "d";
+    }
+    function bugAt(x, y) {
+      if (!state.map || !state.map.bugs) return null;
+      let hit = null, best = 99;
+      for (const b of state.map.bugs) {
+        const p = bugPosition(b);
+        const d = Math.hypot(p.x - x, p.y - y);
+        if (d < best && d < (b.extra ? 0.82 : 0.68)) { best = d; hit = b; }
+      }
+      return hit;
+    }
+    function handleBugContact() {
+      if (state.scene !== "game" || !state.map || state.mode === "focus") return;
+      const b = bugAt(state.player.fx, state.player.fy) || bugAt(state.player.gx, state.player.gy);
+      if (!b) return;
+      if (state.t - (b.hitAt || -9) <= 1.15 || state.t - state.lastBugHitAt <= 0.6) return;
+      b.hitAt = state.t;
+      state.lastBugHitAt = state.t;
+      if (state.hitBugs.includes(b.id)) {
+        addFx("闪避边缘", C.amber);
+        sfx.blocked();
+        return;
+      }
+      state.hitBugs.push(b.id);
+      state.bugHits += 1;
+      state.streak = 0;
+      raiseHeat(BUG_HIT_HEAT, "red bug");
+      sfx.alarm();
+      showBot(BOT_LINES.bugHit, 4);
+    }
+    const DELTA = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+    function tryStep(dir) {
+      const p = state.player;
+      if (p.moving || state.mode === "focus") return;
+      p.dir = dir;
+      const m = state.map;
+      const d = DELTA[dir];
+      const nx = p.gx + d[0], ny = p.gy + d[1];
+      const target = (m.grid[ny] || [])[nx];
+      if (target === "D") {
+        // 走到发光文件门 → step_into 进入对应文件，或触发 Boss
+        const door = FILES[state.activeFile].door;
+        if (state.activeFile === "main.py") {   // 列表房顶上的门：通关(remove 光/insert 到 0)才开
+          if (state.npc && state.npc.win) { p.dir = dir; transitionToFile(door.to); }
+          else { sfx.blocked(); showBot("门口还堵着。先 remove 清光所有 NPC，或 insert 把自己排到下标 0。", 5); }
+          return;
+        }
+        if (door && door.boss) { p.dir = dir; enterBoss(door.boss); }
+        else if (door && door.locked) { sfx.blocked(); showBot(BOT_LINES.doorLocked); }
+        else if (door) transitionToFile(door.to);
+        else sfx.blocked();
+        return;
+      }
+      if (target === "W" && !state.mainBreak) {
+        // while True 没补 break：循环又转一圈，把你弹回原点（补上 break 后 W 变成可走的通道，往上进列表房）
+        sfx.blocked();
+        state.rollbackUnlocked = true;
+        addGameTime(0.2, "while 又转一圈"); raiseHeat(5, "while True 空转");
+        const sp = state.map.spawn;
+        p.gx = sp.x; p.gy = sp.y; p.fx = sp.x; p.fy = sp.y; p.moving = false; p.dir = "up";
+        addFx("while True → 回到开头", C.amber);
+        showBot("你又回到了原点。while True 不会自己停，要补一句 break 才跳得出去。", 6);
+        return;
+      }
+      // 死路门（左房 elif / 右房另一端）：看着像门，其实打不开
+      if (target === "d") {
+        const dd = (FILES[state.activeFile].deadDoors || []).find(o => o.x === nx && o.y === ny);
+        sfx.blocked(); state.rollbackUnlocked = true;
+        if (dd && dd.kind === "origin") {
+          if (!state.mainBreak) {
+            const sp = state.map.spawn;
+            p.gx = sp.x; p.gy = sp.y; p.fx = sp.x; p.fy = sp.y; p.moving = false; p.dir = "up";
+            addFx("这门把你送回了原点", C.amber);
+            showBot("这扇门看着像出口，走过去却把你送回了原点。真正的出路是给 while 补一句 break。", 6);
+          } else showBot("这扇门是死的，打不开。补好 break 后，往上从循环出口（W）出去。", 5);
+        } else {
+          addGameTime(0.2, "白走一趟");
+          addFx("死路 · 用 rollback 回头", C.amber);
+          showBot("这门看着像通往下一个房间，其实是 elif Left 死路，啥也修不了。按 rollback() 回岔路口，改走右边。", 7);
+        }
+        return;
+      }
+      if (state.activeFile === "main.py" && npcBlocksTile(nx, ny)) {   // NPC 占着的下标格挡路
+        sfx.blocked(); showBot("有个 NPC 占着这个下标，过不去。用 remove 把人删掉，或 insert 把自己排到下标 0。", 5); return;
+      }
+      if (canMove(nx, ny)) {
+        if (state.npc && state.npc.preview != null) state.npc.preview = null;  // 一走动，insert 预览里让位的人就归位
+        p.gx = nx; p.gy = ny; p.moving = true;
+        state.lastMoveAt = state.t;
+        sfx.step();
+        handleBugContact();
+        const pk = pickupAt(nx, ny);
+        if (pk) collect(pk);
+        handleTerminalContact(nx, ny);
+        checkDialogue(nx, ny);          // 走进新房间 → 触发该房对话（bot 念代码、对应行高亮）
+        const fp = focusAt(nx, ny);
+        if (fp) enterFocus(fp);
+        else if (!pk && !state.dlg) nearHints(nx, ny);
+      } else {
+        sfx.blocked();
+      }
+    }
+    function nearHints(x, y) {
+      const m = state.map;
+      const door = FILES[state.activeFile].door;
+      for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+        const c = (m.grid[y + dy] || [])[x + dx];
+        if (c === "D" && state.t > state.bot.until) showBot(door && door.locked ? BOT_LINES.doorLocked : BOT_LINES.door);
+        if (c === "W" && state.t > state.bot.until) showBot(state.mainBreak ? BOT_LINES.loopBreak : BOT_LINES.whileRoom);
+      }
+    }
+
+    // 列表房 NPC 的显示位置朝目标下标格缓动（remove/insert 时人会“走”过去，下标变化看得见）
+    function updateNpc(dt) {
+      const n = state.npc;
+      if (!n || state.activeFile !== "main.py") return;
+      const slots = FILES["main.py"].npc.slots;
+      if (!n.pos) { n.pos = {}; n.list.forEach((id, idx) => { const s = slots[idx]; n.pos[id] = { x: s.x, y: s.y }; }); }
+      const k = Math.min(1, dt * 9);
+      n.list.forEach((id, idx) => {
+        const s = npcTargetSlot(n, idx);
+        if (!n.pos[id]) n.pos[id] = { x: s.x, y: s.y };
+        n.pos[id].x += (s.x - n.pos[id].x) * k;
+        n.pos[id].y += (s.y - n.pos[id].y) * k;
+      });
+    }
+    function updatePlayer(dt) {
+      const p = state.player;
+      if (p.moving) {
+        const speed = 7.5; // 格/秒
+        p.fx += (p.gx - p.fx) * Math.min(1, speed * dt);
+        p.fy += (p.gy - p.fy) * Math.min(1, speed * dt);
+        p.anim += dt;
+        p.frame = Math.floor(p.anim * 8) % 2;
+        if (Math.abs(p.gx - p.fx) < 0.04 && Math.abs(p.gy - p.fy) < 0.04) {
+          p.fx = p.gx; p.fy = p.gy; p.moving = false; p.anim = 0; p.frame = 0;
+          handleBugContact();
+          if (state.held) tryStep(state.held); // 连续行走
+        }
+      } else {
+        handleBugContact();
+      }
+    }
+    function updateFx(dt) {
+      for (let i = state.fx.length - 1; i >= 0; i--) {
+        state.fx[i].t += dt;
+        if (state.fx[i].t > 1.3) state.fx.splice(i, 1);
+      }
+    }
+
+    // ================= 主循环 =================
+    function loop(now) {
+      const dt = Math.min(0.05, (now - (state.last || now)) / 1000);
+      state.last = now; state.t += dt;
+      state.titleT = (Math.sin(now / 420) + 1) / 2;
+      if (state.scene === "intro" && state.introPhase === "vortex") state.introT += dt;
+      if (state.scene === "file_transition") {
+        state.ftT += dt;
+        if (state.ftT >= 0.45 && !state.ftLoaded) { loadFile(state.ftTo); state.ftLoaded = true; }
+        if (state.ftT >= 0.9) { state.scene = "game"; saveCheckpoint(); showBot(FILES[state.activeFile].intro, 5); checkMeltdown(); }
+      }
+      if (state.scene === "game") { updatePassiveHeat(dt); updatePlayer(dt); updateNpc(dt); updateFx(dt); }
+      if (state.scene === "hidden_corridor") updateCorridor(dt);
+      if (state.scene === "hidden_boss") { updateBoss(dt); updateFx(dt); }
+      if (state.scene === "heat_story") {
+        state.heatStoryT += dt;
+        if (state.heatStoryT >= 4.2) enterBoss("cpu", "heat");
+      }
+      state.buttons = [];
+      ctx.clearRect(0, 0, state.W, state.H);
+      if (state.scene === "title") drawTitle();
+      else if (state.scene === "intro") drawIntro();
+      else if (state.scene === "file_transition") drawFileTransition();
+      else if (state.scene === "ending") drawEnding();
+      else if (state.scene === "heat_story") drawHeatStory();
+      else if (state.scene === "hidden_corridor") drawCorridor();
+      else if (state.scene === "hidden_boss") drawBoss();
+      else drawGame();
+      requestAnimationFrame(loop);
+    }
+
+    // ================= 输入 =================
+    function evtPos(e) {
+      const r = canvas.getBoundingClientRect();
+      const pt = e.touches ? e.touches[0] : e;
+      return { x: pt.clientX - r.left, y: pt.clientY - r.top };
+    }
+    function hit(x, y) {
+      for (let i = state.buttons.length - 1; i >= 0; i--) {
+        const b = state.buttons[i];
+        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return b;
+      }
+      return null;
+    }
+    function onDown(e) {
+      e.preventDefault();
+      if (state.scene === "intro") { introToVortex(); return; }
+      if (state.scene === "file_transition") return;
+      if (state.scene === "heat_story") {
+        if (state.heatStoryT < 2.0) state.heatStoryT = 2.0;
+        else enterBoss("cpu", "heat");
+        return;
+      }
+      if (state.scene === "hidden_corridor") {
+        if (state.corridor.revealed) enterBoss(); else state.corridor.t = 3;
+        return;
+      }
+      // 进房对话进行中：点一下推进下一句（不误触地图/方向键）
+      if (state.scene === "game" && state.dlg && !state.inv.open && !state.quiz.open && !state.peek.open && !state.npcPick.open && !state.help.open) { advanceDlg(); return; }
+      const p = evtPos(e), b = hit(p.x, p.y);
+      if (!b) return;
+      if (b.down) b.down();
+      if (b.tap) b.tap();
+    }
+    function onUp(e) {
+      e.preventDefault();
+      for (const b of state.buttons) if (b.up) b.up();
+    }
+    function onKey(e) {
+      const map = { ArrowUp: "up", w: "up", W: "up", ArrowDown: "down", s: "down", S: "down", ArrowLeft: "left", a: "left", A: "left", ArrowRight: "right", d: "right", D: "right" };
+      const dir = map[e.key];
+      if (state.scene === "game" && state.dlg) { e.preventDefault(); advanceDlg(); return; }   // 对话中：任意键推进
+      if (dir && state.scene === "game" && state.mode !== "focus") { e.preventDefault(); state.held = dir; tryStep(dir); }
+      else if ((e.key === "Enter" || e.key === " ")) {
+        if (state.scene === "title") { e.preventDefault(); beginIntro(); }
+        else if (state.scene === "intro") introToVortex();
+        else if (state.scene === "heat_story") {
+          if (state.heatStoryT < 2.0) state.heatStoryT = 2.0;
+          else enterBoss("cpu", "heat");
+        }
+      }
+    }
+    function onKeyUp(e) {
+      const map = { ArrowUp: "up", w: "up", W: "up", ArrowDown: "down", s: "down", S: "down", ArrowLeft: "left", a: "left", A: "left", ArrowRight: "right", d: "right", D: "right" };
+      const dir = map[e.key];
+      if (dir && state.held === dir) state.held = null;
+    }
+
+    function init() {
+      try {
+        if (!ctx) throw new Error("no canvas");
+        buildAssets();
+        loadProgress();
+        resize();
+        loadFile("main.py");
+        window.addEventListener("resize", resize);
+        window.addEventListener("keydown", onKey);
+        window.addEventListener("keyup", onKeyUp);
+        canvas.addEventListener("pointerdown", onDown);
+        canvas.addEventListener("pointerup", onUp);
+        canvas.addEventListener("pointercancel", onUp);
+        canvas.addEventListener("pointerleave", onUp);
+        requestAnimationFrame(loop);
+      } catch (e) { showFatal(); }
+    }
+    window.addEventListener("error", showFatal);
+    window.addEventListener("unhandledrejection", showFatal);
+    init();
+  })();
+  </script>
+</body>
+</html>
